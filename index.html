@@ -2532,11 +2532,12 @@ async function initFirestore() {
     try {
         await _withTimeout(
             Promise.all(COLECCIONES.map(async col => {
-                const snap = await _fdb.collection(col).get();
+                // source:'server' fuerza lectura fresca, ignorando cualquier caché del SDK
+                const snap = await _fdb.collection(col).get({ source: 'server' });
                 _cache[col] = snap.docs.map(d => _fromFS(d.data()));
                 _cache[col].sort((a, b) => (b.id || 0) - (a.id || 0));
             })),
-            10000 // 10 segundos máximo
+            30000 // 30 segundos (antes 10s — más tolerante en redes lentas)
         );
 
         // Si Firestore está vacío y hay datos en localStorage → migrar
@@ -5911,37 +5912,80 @@ function exportarBackup() {
     alert('Backup listo: ' + nombre + '\n(' + nClaves + ' claves exportadas)\nBúscalo en Descargas.');
 }
 
-function importarBackup(e) {
+async function importarBackup(e) {
     const file = e.target.files[0];
     if (!file) return;
-    if (!confirm(`⚠️ Restaurar desde "${file.name}" REEMPLAZARÁ todos los datos en Firebase.\n\n¿Estás seguro?`)) {
-        e.target.value = '';
-        return;
-    }
     const reader = new FileReader();
-    reader.onload = ev => {
+    reader.onload = async ev => {
         try {
             const backup = JSON.parse(ev.target.result);
-            if (!backup.datos) throw new Error('Formato de backup inválido');
-            mostrarCargando(true, 'Restaurando backup en Firebase...');
-            const batch = _fdb.batch();
-            let count = 0;
+
+            // Aceptar DOS formatos:
+            // - Nuevo:  { version, fecha, datos: { hda_parcelas: [...] } }
+            // - Viejo:  { hda_parcelas: [...], hda_cosechas: [...] }  (extracción directa de localStorage)
+            const datos = backup.datos || backup;
+
+            // Verificar que haya al menos una colección conocida
+            const tieneData = COLECCIONES.some(c =>
+                Array.isArray(datos['hda_' + c]) && datos['hda_' + c].length > 0
+            );
+            if (!tieneData) throw new Error('El archivo no contiene datos reconocibles de la hacienda');
+
+            // Contar registros
+            let total = 0;
             COLECCIONES.forEach(col => {
-                const items = backup.datos['hda_' + col];
+                const items = datos['hda_' + col];
+                if (Array.isArray(items)) total += items.length;
+            });
+
+            if (!confirm(
+                `⚠️ RESTAURAR BACKUP\n\n` +
+                `Archivo: ${file.name}\n` +
+                `Registros: ${total}\n` +
+                `Fecha: ${backup.fecha?.slice(0,10) || 'desconocida'}\n\n` +
+                `Esto BORRARÁ todos los datos actuales en Firebase y los reemplazará con el backup.\n\n¿Continuar?`
+            )) { e.target.value = ''; return; }
+
+            // ── PASO 1: Borrar datos actuales en Firestore ──
+            mostrarCargando(true, 'Borrando datos actuales en Firebase...');
+            for (const col of COLECCIONES) {
+                const snap = await _fdb.collection(col).get();
+                if (snap.docs.length === 0) continue;
+                // Borrar en lotes de 400 (límite Firestore: 500)
+                for (let i = 0; i < snap.docs.length; i += 400) {
+                    const delBatch = _fdb.batch();
+                    snap.docs.slice(i, i + 400).forEach(doc => delBatch.delete(doc.ref));
+                    await delBatch.commit();
+                }
+            }
+
+            // ── PASO 2: Escribir datos del backup ──
+            mostrarCargando(true, `Subiendo ${total} registros a Firebase...`);
+            const allOps = [];
+            COLECCIONES.forEach(col => {
+                const items = datos['hda_' + col];
                 if (!Array.isArray(items)) return;
-                items.forEach(item => {
-                    batch.set(_fdb.collection(col).doc(String(item.id)), _toFS(item));
-                    count++;
+                items.forEach(item => allOps.push({ col, item }));
+            });
+
+            // Dividir en lotes de 400
+            for (let i = 0; i < allOps.length; i += 400) {
+                const writeBatch = _fdb.batch();
+                allOps.slice(i, i + 400).forEach(({ col, item }) => {
+                    writeBatch.set(_fdb.collection(col).doc(String(item.id)), _toFS(item));
                 });
-            });
-            batch.commit().then(() => {
-                mostrarCargando(false);
-                alert(`✅ Backup restaurado (${count} registros).\nFecha del backup: ${backup.fecha?.slice(0,10) || 'desconocida'}\n\nLa página se recargará.`);
-                location.reload();
-            }).catch(err => {
-                mostrarCargando(false);
-                alert('❌ Error al restaurar en Firebase: ' + err.message);
-            });
+                await writeBatch.commit();
+            }
+
+            mostrarCargando(false);
+            alert(
+                `✅ Backup restaurado correctamente.\n` +
+                `${total} registros subidos a Firebase.\n` +
+                `Fecha: ${backup.fecha?.slice(0,10) || 'desconocida'}\n\n` +
+                `La página se recargará.`
+            );
+            location.reload();
+
         } catch(err) {
             mostrarCargando(false);
             alert('❌ Error al importar: ' + err.message);
