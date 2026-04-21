@@ -2543,6 +2543,19 @@ async function initFirestore() {
             30000 // 30 segundos (antes 10s — más tolerante en redes lentas)
         );
 
+        // Cargar configuración (API key, etc.) desde Firestore
+        try {
+            const cfgSnap = await _fdb.collection('_config').doc('global').get({ source: 'server' });
+            if (cfgSnap.exists) {
+                const cfg = cfgSnap.data();
+                if (cfg.hda_apikey) {
+                    localStorage.setItem('hda_apikey', cfg.hda_apikey);
+                    const el = document.getElementById('anthropic-key');
+                    if (el) el.value = cfg.hda_apikey;
+                }
+            }
+        } catch(e) { console.warn('No se pudo cargar config de Firestore:', e); }
+
         // Si Firestore está vacío y hay datos en localStorage → migrar
         const tieneFirestore = COLECCIONES.some(c => _cache[c].length > 0);
         if (!tieneFirestore) await migrarDesdeLocalStorage();
@@ -3770,7 +3783,12 @@ function saveApiKey() {
     const k = document.getElementById('anthropic-key').value.trim();
     if (!k) return alert('Ingresa tu API key.');
     localStorage.setItem('hda_apikey', k);
-    alert('✅ API key guardada en este navegador.');
+    // Sincronizar a Firestore para que esté disponible en todos los dispositivos
+    if (!_MODO_LOCAL) {
+        _fdb.collection('_config').doc('global').set({ hda_apikey: k }, { merge: true })
+            .catch(e => console.warn('Error sincronizando API key:', e));
+    }
+    alert('✅ API key guardada y sincronizada en todos los dispositivos.');
 }
 
 function loadApiKey() {
