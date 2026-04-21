@@ -5946,20 +5946,7 @@ async function importarBackup(e) {
                 `Esto BORRARÁ todos los datos actuales en Firebase y los reemplazará con el backup.\n\n¿Continuar?`
             )) { e.target.value = ''; return; }
 
-            // ── PASO 1: Borrar datos actuales en Firestore ──
-            mostrarCargando(true, 'Borrando datos actuales en Firebase...');
-            for (const col of COLECCIONES) {
-                const snap = await _fdb.collection(col).get();
-                if (snap.docs.length === 0) continue;
-                // Borrar en lotes de 400 (límite Firestore: 500)
-                for (let i = 0; i < snap.docs.length; i += 400) {
-                    const delBatch = _fdb.batch();
-                    snap.docs.slice(i, i + 400).forEach(doc => delBatch.delete(doc.ref));
-                    await delBatch.commit();
-                }
-            }
-
-            // ── PASO 2: Escribir datos del backup ──
+            // ── Escribir datos del backup (upsert: sobreescribe por ID) ──
             mostrarCargando(true, `Subiendo ${total} registros a Firebase...`);
             const allOps = [];
             COLECCIONES.forEach(col => {
