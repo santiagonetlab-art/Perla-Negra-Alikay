@@ -3011,10 +3011,10 @@ function capturarFotoPunto(idx, event) {
     const file = event.target.files[0];
     if (!file || !_muestreoActivo) return;
     const reader = new FileReader();
-    reader.onload = ev => {
-        const compressed = comprimirImagen(ev.target.result, 800, 0.75);
+    reader.onload = async ev => {
+        const compressed = await comprimirImagen(ev.target.result, 800, 0.75);
         const punto = _muestreoActivo.puntos.find(p => p.idx === idx);
-        if (punto) { punto.foto = compressed; punto.fotoType = file.type || 'image/jpeg'; }
+        if (punto) { punto.foto = compressed; punto.fotoType = 'image/jpeg'; }
         renderProgresoMuestreo(_muestreoActivo);
         renderPuntosChecklist(_muestreoActivo);
         if (_muestreoMarkers[idx]) {
@@ -5457,19 +5457,37 @@ function guardarObservacion() {
 }
 
 function comprimirImagen(dataUrl, maxDim, quality) {
-    try {
-        const canvas = document.createElement('canvas');
-        const img = new Image();
-        img.src = dataUrl;
-        let w = img.width || 400, h = img.height || 300;
-        if (w > maxDim || h > maxDim) {
-            if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
-            else       { w = Math.round(w * maxDim / h); h = maxDim; }
-        }
-        canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        return canvas.toDataURL('image/jpeg', quality);
-    } catch { return dataUrl; }
+    // Versión asíncrona — espera que la imagen cargue antes de comprimir
+    return new Promise((resolve) => {
+        try {
+            const img = new Image();
+            img.onload = () => {
+                let w = img.width, h = img.height;
+                if (w > maxDim || h > maxDim) {
+                    if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
+                    else       { w = Math.round(w * maxDim / h); h = maxDim; }
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                let result = canvas.toDataURL('image/jpeg', quality);
+                // Si aún supera 4MB en base64, comprimir más
+                if (result.length > 4 * 1024 * 1024) {
+                    result = canvas.toDataURL('image/jpeg', 0.5);
+                }
+                if (result.length > 4 * 1024 * 1024) {
+                    // Reducir también dimensión
+                    const c2 = document.createElement('canvas');
+                    c2.width = Math.round(w * 0.6); c2.height = Math.round(h * 0.6);
+                    c2.getContext('2d').drawImage(canvas, 0, 0, c2.width, c2.height);
+                    result = c2.toDataURL('image/jpeg', 0.5);
+                }
+                resolve(result);
+            };
+            img.onerror = () => resolve(dataUrl);
+            img.src = dataUrl;
+        } catch(e) { resolve(dataUrl); }
+    });
 }
 
 function eliminarObservacion(id) {
@@ -7310,10 +7328,10 @@ function onFotoCampoCapturada(event) {
     if (!file || !_campoSesion) return;
     const idx = parseInt(event.target.dataset.puntoIdx) || _campoSesion.puntos.find(p => !p.foto)?.idx || 1;
     const reader = new FileReader();
-    reader.onload = ev => {
-        const compressed = comprimirImagen(ev.target.result, 800, 0.75);
+    reader.onload = async ev => {
+        const compressed = await comprimirImagen(ev.target.result, 800, 0.75);
         const punto = _campoSesion.puntos.find(p => p.idx === idx);
-        if (punto) { punto.foto = compressed; punto.fotoType = file.type || 'image/jpeg'; }
+        if (punto) { punto.foto = compressed; punto.fotoType = 'image/jpeg'; }
         actualizarUIRecorrido();
         const st = document.getElementById('campo-foto-status');
         st.textContent = 'Punto ' + idx + ' fotografiado';
