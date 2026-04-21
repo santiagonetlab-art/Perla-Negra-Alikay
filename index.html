@@ -2543,7 +2543,7 @@ async function initFirestore() {
             30000 // 30 segundos (antes 10s — más tolerante en redes lentas)
         );
 
-        // Cargar configuración (API key, etc.) desde Firestore
+        // Cargar configuración (API key, Copernicus, etc.) desde Firestore
         try {
             const cfgSnap = await _fdb.collection('_config').doc('global').get({ source: 'server' });
             if (cfgSnap.exists) {
@@ -2552,6 +2552,16 @@ async function initFirestore() {
                     localStorage.setItem('hda_apikey', cfg.hda_apikey);
                     const el = document.getElementById('anthropic-key');
                     if (el) el.value = cfg.hda_apikey;
+                }
+                if (cfg.hda_sh_instance_id) {
+                    localStorage.setItem('hda_sh_instance_id', cfg.hda_sh_instance_id);
+                    const el = document.getElementById('sh-instance-id');
+                    if (el) el.value = cfg.hda_sh_instance_id;
+                }
+                if (cfg.hda_sh_client_secret) {
+                    localStorage.setItem('hda_sh_client_secret', cfg.hda_sh_client_secret);
+                    const el = document.getElementById('sh-client-secret');
+                    if (el) el.value = cfg.hda_sh_client_secret;
                 }
             }
         } catch(e) { console.warn('No se pudo cargar config de Firestore:', e); }
@@ -4393,8 +4403,15 @@ function guardarSentinelCredentials() {
     if (!id || !secret) return alert('Ingresa tanto el Client ID como el Client Secret.');
     localStorage.setItem('hda_sh_instance_id', id);
     localStorage.setItem('hda_sh_client_secret', secret);
+    // Sincronizar a Firestore
+    if (!_MODO_LOCAL) {
+        _fdb.collection('_config').doc('global').set(
+            { hda_sh_instance_id: id, hda_sh_client_secret: secret },
+            { merge: true }
+        ).catch(e => console.warn('Error sincronizando credenciales Copernicus:', e));
+    }
     document.getElementById('sh-status').innerHTML =
-        '<span style="color:#2d6a4f">✅ Credenciales guardadas. Puedes usar los índices en el mapa y presionar 🔄 Actualizar.</span>';
+        '<span style="color:#2d6a4f">✅ Credenciales guardadas y sincronizadas en todos los dispositivos.</span>';
 }
 
 function guardarUmbrales() {
