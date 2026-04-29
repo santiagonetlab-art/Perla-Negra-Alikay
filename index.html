@@ -3077,10 +3077,17 @@ async function analizarMuestreo() {
     const fotos = conFoto.length <= 20 ? conFoto
         : conFoto.filter((_, i) => i % Math.ceil(conFoto.length / 20) === 0).slice(0, 20);
 
+    // Recomprimir cualquier foto que supere 4MB en base64 antes de enviar
+    for (const p of fotos) {
+        if (p.foto && p.foto.length > 4 * 1024 * 1024) {
+            p.foto = await comprimirImagen(p.foto, 600, 0.6);
+        }
+    }
+
     const content = [];
     fotos.forEach(p => {
         content.push({ type: 'image',
-            source: { type: 'base64', media_type: p.fotoType || 'image/jpeg', data: p.foto.split(',')[1] } });
+            source: { type: 'base64', media_type: 'image/jpeg', data: p.foto.split(',')[1] } });
         content.push({ type: 'text', text: `Foto del Punto de muestreo ${p.idx}` });
     });
     content.push({ type: 'text', text:
@@ -5405,7 +5412,7 @@ Responde SOLO con el siguiente JSON, sin texto adicional ni markdown:
     }
 }
 
-function guardarObservacion() {
+async function guardarObservacion() {
     const parcelaId  = parseInt(document.getElementById('obs-parcela').value) || null;
     const descripcion = document.getElementById('obs-descripcion').value.trim();
     if (!parcelaId)    return alert('Selecciona una parcela.');
@@ -5423,7 +5430,7 @@ function guardarObservacion() {
     let fotoGuardar = null;
     if (fotoSrc && fotoSrc.startsWith('data:')) {
         // Limitar a ~200KB redimensionando
-        fotoGuardar = comprimirImagen(fotoSrc, 400, 0.6);
+        fotoGuardar = await comprimirImagen(fotoSrc, 400, 0.6);
     }
 
     const obs = {
@@ -7383,9 +7390,17 @@ async function enviarAnalisisCampo() {
     mostrarPantallaCampo('analizando');
     const fotos = conFoto.length <= 20 ? conFoto
         : conFoto.filter((_, i) => i % Math.ceil(conFoto.length / 20) === 0).slice(0, 20);
+
+    // Recomprimir cualquier foto que supere 4MB en base64 antes de enviar
+    for (const p of fotos) {
+        if (p.foto && p.foto.length > 4 * 1024 * 1024) {
+            p.foto = await comprimirImagen(p.foto, 600, 0.6);
+        }
+    }
+
     const content = [];
     fotos.forEach(p => {
-        content.push({ type: 'image', source: { type: 'base64', media_type: p.fotoType || 'image/jpeg', data: p.foto.split(',')[1] } });
+        content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: p.foto.split(',')[1] } });
         content.push({ type: 'text', text: 'Foto del Punto ' + p.idx });
     });
     content.push({ type: 'text', text: `Eres un agronomo experto en aguacate. Se te presentan ${fotos.length} fotos de puntos de muestreo de la parcela "${m.parcelaNombre}". Analiza todas en conjunto. Responde SOLO con JSON exacto sin texto ni markdown: {"porcentaje_arboles_con_problema":numero,"problema_mas_frecuente":"texto","severidad_promedio":"saludable|leve|moderado|severo","estado_general":"Excelente|Bueno|Aceptable|Preocupante|Critico","distribucion_severidad":{"saludable":N,"leve":N,"moderado":N,"severo":N},"recomendacion_urgente":"texto","recomendaciones_detalladas":["r1","r2","r3"]}` });
