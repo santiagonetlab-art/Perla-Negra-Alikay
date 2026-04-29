@@ -1357,18 +1357,23 @@
         </div>
         <div style="max-width:480px">
 
-            <!-- ── Respaldo de Configuración ───────────────────── -->
+            <!-- ── Respaldo Completo (Configuración + Datos) ───── -->
             <div class="card" style="margin-bottom:20px;background:linear-gradient(135deg,#f0f7ff,#e8f5e9);border:1px solid #90caf9">
-                <div class="card-header" style="border-color:#90caf9">💾 Respaldo de Configuración</div>
+                <div class="card-header" style="border-color:#90caf9">💾 Respaldo completo de la app</div>
                 <div style="padding:16px">
                     <p style="font-size:13px;color:#555;margin-bottom:6px">
-                        Exporta todas tus credenciales a un archivo JSON: API Key, Copernicus, PINs y foto de la hacienda.
-                        Úsalo para restaurar la configuración en otro dispositivo o después de redesplegar la app.
+                        Exporta <strong>todo</strong> a un archivo JSON: credenciales (API Key, Copernicus, PINs),
+                        parcelas, observaciones, muestreos IA, cosechas, labores, gastos, insumos, facturas
+                        e historial satelital. Úsalo para migrar entre dispositivos, restaurar tras un redespliegue,
+                        o como respaldo periódico.
                     </p>
                     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-                        <button class="btn btn-primary" onclick="exportarConfig()">⬇️ Exportar configuración</button>
-                        <button class="btn btn-outline" onclick="importarConfig()">⬆️ Importar configuración</button>
+                        <button class="btn btn-primary" onclick="exportarConfig()">⬇️ Exportar respaldo</button>
+                        <button class="btn btn-outline" onclick="importarConfig()">⬆️ Importar respaldo</button>
                     </div>
+                    <p style="font-size:11px;color:#666;margin:0 0 4px">
+                        💡 Al importar con datos operativos, podrás <strong>fusionar</strong> con lo existente o <strong>reemplazar</strong>.
+                    </p>
                     <p style="font-size:11px;color:#e53935;margin:0">
                         ⚠️ El archivo contiene credenciales sensibles. Guárdalo en un lugar seguro.
                     </p>
@@ -2925,7 +2930,7 @@ function puntoDentroDePoligono(lat, lng, polygon) {
 }
 
 function generarPuntosMuestreo(poligono, ha) {
-    const n = Math.max(5, Math.ceil((parseFloat(ha) || 1) * 15));
+    const n = Math.max(5, Math.ceil((parseFloat(ha) || 1) * 5)); // 5 puntos/ha (antes 15)
     const lats = poligono.map(p => p[0]), lngs = poligono.map(p => p[1]);
     const minLat = Math.min(...lats), maxLat = Math.max(...lats);
     const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
@@ -2969,7 +2974,7 @@ function renderProgresoMuestreo(m) {
     const total   = m.puntos.length;
     const hechas  = m.puntos.filter(p => p.foto).length;
     const pct     = Math.round(hechas / total * 100);
-    const minReq  = Math.ceil(total * 0.8);
+    const minReq  = 1; // mínimo 1 foto para analizar
     const listo   = hechas >= minReq;
     document.getElementById('muestreo-progreso').innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -2979,7 +2984,7 @@ function renderProgresoMuestreo(m) {
         <div style="background:#e0e0e0;border-radius:8px;height:10px;overflow:hidden">
             <div style="background:${listo ? '#40916c' : '#e07b2a'};height:100%;width:${pct}%;transition:width .3s;border-radius:8px"></div>
         </div>
-        <div style="font-size:11px;color:#aaa;margin-top:5px">Mínimo requerido: ${minReq} puntos (80%) para poder analizar.</div>`;
+        <div style="font-size:11px;color:#aaa;margin-top:5px">Con 1 foto ya puedes analizar (se usan las fotos disponibles).</div>`;
     const btn = document.getElementById('btn-analizar-muestreo');
     btn.disabled       = !listo;
     btn.style.opacity  = listo ? '1' : '0.5';
@@ -3065,8 +3070,8 @@ async function analizarMuestreo() {
     if (!apiKey) return alert('Primero guarda tu API Key de Anthropic en la sección Gastos.');
     const m      = _muestreoActivo;
     const conFoto = m.puntos.filter(p => p.foto);
-    if (conFoto.length < Math.ceil(m.totalPuntos * 0.8))
-        return alert(`Faltan fotos. Tienes ${conFoto.length}/${m.totalPuntos}.`);
+    if (conFoto.length < 1)
+        return alert('Toma al menos una foto antes de analizar.');
 
     const btn      = document.getElementById('btn-analizar-muestreo');
     const statusEl = document.getElementById('muestreo-analisis-status');
@@ -7116,37 +7121,38 @@ function guardarPIN(tipo) {
     alert('PIN ' + (tipo === 'trabajador' ? 'trabajador' : 'administrador') + ' actualizado.');
 }
 
-// ─── EXPORTAR / IMPORTAR CONFIGURACIÓN ────────────────────
+// ─── EXPORTAR / IMPORTAR CONFIGURACIÓN + DATOS ─────────────
+const CLAVES_BACKUP = [
+    'hda_apikey','hda_sh_instance_id','hda_sh_client_secret','hda_umbrales',
+    'hda_pin_trabajador','hda_pin_admin','hda_mapa_hacienda',
+    'hda_parcelas','hda_observaciones','hda_muestreos','hda_cosechas',
+    'hda_labores','hda_gastos','hda_insumos','hda_facturas_scan',
+    'hda_indice_historial','hda_indices_cache','hda_alertas','hda_schema'
+];
+
 function exportarConfig() {
-    const claves = [
-        'hda_apikey',
-        'hda_sh_instance_id',
-        'hda_sh_client_secret',
-        'hda_umbrales',
-        'hda_pin_trabajador',
-        'hda_pin_admin',
-        'hda_mapa_hacienda'
-    ];
-    const cfg = { version: 1, fecha: new Date().toISOString(), datos: {} };
-    let total = 0;
-    claves.forEach(k => {
+    const cfg = { version: 2, fecha: new Date().toISOString(), datos: {} };
+    let totalCred = 0, totalDatos = 0;
+    CLAVES_BACKUP.forEach(k => {
         const v = localStorage.getItem(k);
-        if (v) { cfg.datos[k] = v; total++; }
+        if (v == null) return;
+        cfg.datos[k] = v;
+        if (k === 'hda_apikey' || k.startsWith('hda_sh_') || k.startsWith('hda_pin_') ||
+            k === 'hda_umbrales' || k === 'hda_mapa_hacienda') totalCred++;
+        else totalDatos++;
     });
-    if (total === 0) {
-        alert('No hay configuración guardada aún para exportar.');
-        return;
-    }
+    const total = totalCred + totalDatos;
+    if (total === 0) { alert('No hay datos guardados aún para exportar.'); return; }
     const blob = new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href     = url;
-    a.download = 'hacienda-config-' + new Date().toISOString().slice(0,10) + '.json';
+    a.download = 'hacienda-backup-' + new Date().toISOString().slice(0,10) + '.json';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    alert('✅ Configuración exportada (' + total + ' elementos).\nGuarda el archivo en un lugar seguro.');
+    alert('✅ Respaldo exportado:\n• ' + totalCred + ' claves de configuración\n• ' + totalDatos + ' colecciones de datos\n\nGuarda el archivo en un lugar seguro.');
 }
 
 function importarConfig() {
@@ -7161,19 +7167,69 @@ function importarConfig() {
             try {
                 const cfg = JSON.parse(ev.target.result);
                 if (!cfg.datos || typeof cfg.datos !== 'object') throw new Error('Formato de archivo inválido');
-                const clavePermitidas = [
-                    'hda_apikey','hda_sh_instance_id','hda_sh_client_secret',
-                    'hda_umbrales','hda_pin_trabajador','hda_pin_admin','hda_mapa_hacienda'
-                ];
-                let count = 0;
-                clavePermitidas.forEach(k => {
-                    if (cfg.datos[k] !== undefined) {
-                        localStorage.setItem(k, cfg.datos[k]);
-                        count++;
+
+                const datasetsArrays = ['hda_parcelas','hda_observaciones','hda_muestreos','hda_cosechas','hda_labores','hda_gastos','hda_insumos','hda_facturas_scan'];
+                const tieneDatos = datasetsArrays.some(k => cfg.datos[k] !== undefined);
+                let modo = 'reemplazar';
+                if (tieneDatos) {
+                    const r = confirm('El respaldo contiene datos operativos (parcelas, observaciones, etc.).\n\n• Aceptar = FUSIONAR con tus datos actuales (sin perder nada existente)\n• Cancelar = REEMPLAZAR completamente con el respaldo');
+                    modo = r ? 'fusionar' : 'reemplazar';
+                }
+
+                // Mapa de parcelas locales por nombre — para remapear parcelaId entre dispositivos
+                const parcelasLocales = JSON.parse(localStorage.getItem('hda_parcelas') || '[]');
+                const parcelaIdPorNombre = {};
+                parcelasLocales.forEach(p => { if (p.nombre) parcelaIdPorNombre[p.nombre.toLowerCase().trim()] = p.id; });
+                const remapearParcela = (item) => {
+                    if (!item || !item.parcelaNombre) return item;
+                    const idLocal = parcelaIdPorNombre[item.parcelaNombre.toLowerCase().trim()];
+                    if (idLocal != null && idLocal !== item.parcelaId) item.parcelaId = idLocal;
+                    return item;
+                };
+                const necesitaRemapear = ['hda_observaciones','hda_muestreos','hda_cosechas','hda_labores','hda_gastos','hda_insumos'];
+
+                let count = 0, fusionados = 0;
+                CLAVES_BACKUP.forEach(k => {
+                    if (cfg.datos[k] === undefined) return;
+                    if (modo === 'fusionar' && datasetsArrays.includes(k)) {
+                        try {
+                            const actual = JSON.parse(localStorage.getItem(k) || '[]');
+                            let nuevo   = JSON.parse(cfg.datos[k]);
+                            if (Array.isArray(actual) && Array.isArray(nuevo)) {
+                                if (necesitaRemapear.includes(k)) nuevo = nuevo.map(remapearParcela);
+                                const idsExistentes = new Set(actual.map(x => x.id));
+                                let agregados = 0;
+                                nuevo.forEach(item => {
+                                    if (item && item.id != null && !idsExistentes.has(item.id)) {
+                                        actual.push(item);
+                                        agregados++;
+                                    }
+                                });
+                                localStorage.setItem(k, JSON.stringify(actual));
+                                fusionados += agregados;
+                                count++;
+                                return;
+                            }
+                        } catch(_) {}
                     }
+                    if (necesitaRemapear.includes(k) && k !== 'hda_parcelas') {
+                        try {
+                            const arr = JSON.parse(cfg.datos[k]);
+                            if (Array.isArray(arr)) {
+                                localStorage.setItem(k, JSON.stringify(arr.map(remapearParcela)));
+                                count++;
+                                return;
+                            }
+                        } catch(_) {}
+                    }
+                    localStorage.setItem(k, cfg.datos[k]);
+                    count++;
                 });
-                if (count === 0) throw new Error('No se encontraron claves de configuración válidas');
-                alert('✅ ' + count + ' configuraciones restauradas.\nLa página se recargará para aplicar los cambios.');
+                if (count === 0) throw new Error('No se encontraron claves válidas en el archivo');
+                const msg = modo === 'fusionar'
+                    ? '✅ ' + count + ' claves restauradas.\n• ' + fusionados + ' registros nuevos fusionados.\n\nLa página se recargará.'
+                    : '✅ ' + count + ' claves restauradas (modo reemplazo).\n\nLa página se recargará.';
+                alert(msg);
                 location.reload();
             } catch(err) {
                 alert('❌ Error al importar: ' + err.message);
@@ -7314,7 +7370,7 @@ function actualizarUIRecorrido() {
     const hechas = m.puntos.filter(p => p.foto).length;
     const total  = m.puntos.length;
     const pct    = Math.round(hechas / total * 100);
-    const listo  = hechas >= Math.ceil(total * 0.8);
+    const listo  = hechas >= 1;
     document.getElementById('campo-progreso-texto').textContent = hechas + '/' + total;
     const fill = document.getElementById('campo-progreso-fill');
     fill.style.width = pct + '%';
@@ -7391,7 +7447,7 @@ async function enviarAnalisisCampo() {
     if (!apiKey) return alert('Falta la API Key de Anthropic. Configúrala en la sección de Gastos.');
     const m = _campoSesion;
     const conFoto = m.puntos.filter(p => p.foto);
-    if (conFoto.length < Math.ceil(m.totalPuntos * 0.8)) return;
+    if (conFoto.length < 1) return;
     mostrarPantallaCampo('analizando');
     const fotos = conFoto.length <= 20 ? conFoto
         : conFoto.filter((_, i) => i % Math.ceil(conFoto.length / 20) === 0).slice(0, 20);
