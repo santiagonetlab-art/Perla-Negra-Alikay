@@ -5342,13 +5342,18 @@ async function analizarFotoCultivo() {
     btn.disabled = true;
     statusEl.innerHTML = '<span style="color:#1565c0">🤖 Analizando foto con IA...</span>';
 
-    const src = img.src;
+    let src = img.src;
     if (!src.startsWith('data:')) {
         btn.disabled = false;
         return alert('No se puede procesar esta imagen.');
     }
+    // Comprimir si supera 4MB antes de enviar a la API
+    if (src.length > 4 * 1024 * 1024) {
+        statusEl.innerHTML = '<span style="color:#1565c0">🗜️ Comprimiendo imagen...</span>';
+        src = await comprimirImagen(src, 800, 0.75);
+    }
     const b64 = src.split(',')[1];
-    const mediaType = src.split(':')[1].split(';')[0];
+    const mediaType = 'image/jpeg';
 
     const prompt = `Eres un agrónomo experto en cultivo de aguacate (Persea americana). Analiza esta foto del cultivo y proporciona un diagnóstico en español.
 
