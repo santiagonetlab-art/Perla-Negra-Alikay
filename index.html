@@ -7882,44 +7882,176 @@ function _aiConstruirContexto() {
     const cosechas     = DB.get('cosechas').filter(c => (c.fechaISO||c.fecha||'') >= hace90).slice(0, 20);
     const gastos       = DB.get('gastos').filter(g => (g.fecha||'') >= hace90).slice(0, 20);
     const labores      = DB.get('labores').filter(l => (l.fecha||'') >= hace90).slice(0, 20);
-    const insumos      = DB.get('insumos').slice(0, 20);
-    const trabajadores = DB.get('trabajadores').slice(0, 15);
-    const observaciones= DB.get('observaciones').slice(0, 8);
+    const insumos      = DB.get('insumos').slice(0, 25);
+    const trabajadores = DB.get('trabajadores').slice(0, 20);
+    const observaciones= DB.get('observaciones').slice(0, 10);
+    const tratamientos = DB.get('tratamientos').filter(t => (t.fecha||'') >= hace90).slice(0, 15);
+    const jornadas     = DB.get('jornadas').filter(j => (j.fecha||'') >= hace90).slice(0, 30);
+    const muestreos    = DB.get('muestreos').slice(0, 5);
 
-    const totalCosechaKg  = cosechas.reduce((s,c) => s + (parseFloat(c.kg)||0), 0);
-    const totalGastos     = gastos.reduce((s,g) => s + (parseFloat(g.monto)||0), 0);
+    // Totales financieros
+    const totalCosechaKg      = cosechas.reduce((s,c) => s + (parseFloat(c.kg)||0), 0);
     const totalIngresoCosecha = cosechas.reduce((s,c) => s + (parseFloat(c.kg)||0)*(parseFloat(c.precio)||0), 0);
+    const totalGastos         = gastos.reduce((s,g) => s + (parseFloat(g.monto)||0), 0);
+    const totalJornadas       = jornadas.reduce((s,j) => s + (parseFloat(j.costo)||0), 0);
+    const rentabilidadNeta    = totalIngresoCosecha - totalGastos - totalJornadas;
 
     let ctx = 'FECHA HOY: ' + hoy + '\n';
     ctx += 'FINCA: Mi Hacienda — Aguacates, La Loma, Carchi, Ecuador\n\n';
 
-    ctx += 'PARCELAS (' + parcelas.length + '):\n';
-    parcelas.forEach(p => { ctx += '  - ' + p.nombre + ': ' + (p.ha||'?') + 'ha, variedad ' + (p.variedad||'?') + '\n'; });
+    // ── RESUMEN FINANCIERO (últimos 90 días) ──
+    ctx += 'RESUMEN FINANCIERO (últimos 90 días):\n';
+    ctx += '  Ingresos cosechas: $' + totalIngresoCosecha.toFixed(2) + '\n';
+    ctx += '  Gastos registrados: $' + totalGastos.toFixed(2) + '\n';
+    ctx += '  Costo jornadas: $' + totalJornadas.toFixed(2) + '\n';
+    ctx += '  Rentabilidad neta estimada: $' + rentabilidadNeta.toFixed(2) + '\n\n';
 
-    ctx += '\nCOSECHAS últimos 90 días (' + cosechas.length + ' registros) — Total: ' + totalCosechaKg.toFixed(0) + 'kg, Ingresos: $' + totalIngresoCosecha.toFixed(2) + '\n';
-    cosechas.slice(0,10).forEach(c => { ctx += '  ' + (c.fechaISO||c.fecha||'') + ': ' + (c.parcela||'') + ' — ' + (c.kg||0) + 'kg a $' + (c.precio||0) + '/kg (' + (c.calidad||'?') + ')\n'; });
+    // ── PARCELAS ──
+    const totalArboles = parcelas.reduce((s,p) => s + (parseInt(p.arboles)||0), 0);
+    const totalHa      = parcelas.reduce((s,p) => s + (parseFloat(p.ha)||0), 0);
+    ctx += 'PARCELAS (' + parcelas.length + ' parcelas · ' + totalHa.toFixed(1) + ' ha totales · ' + totalArboles + ' árboles en total):\n';
+    parcelas.forEach(p => {
+        ctx += '  - ' + p.nombre + ': ' + (p.ha||'?') + ' ha, ' + (parseInt(p.arboles)||0) + ' árboles';
+        if (p.variedad)    ctx += ', variedad ' + p.variedad;
+        if (p.anio)        ctx += ', plantado ' + p.anio;
+        if (p.estado)      ctx += ', estado: ' + p.estado;
+        if (p.notas)       ctx += ' | notas: ' + p.notas;
+        ctx += '\n';
+    });
 
-    ctx += '\nGASTOS últimos 90 días (' + gastos.length + ' registros) — Total: $' + totalGastos.toFixed(2) + '\n';
-    gastos.slice(0,10).forEach(g => { ctx += '  ' + (g.fecha||'') + ': ' + (g.categoria||'') + ' — ' + (g.descripcion||'') + ': $' + (g.monto||0) + ' (' + (g.parcela||'general') + ')\n'; });
-
-    ctx += '\nLABORES últimos 90 días (' + labores.length + ' registros):\n';
-    labores.slice(0,10).forEach(l => { ctx += '  ' + (l.fecha||'') + ': ' + (l.tipo||'') + ' en ' + (l.parcela||'?') + ' — ' + (l.descripcion||'') + ' $' + (l.costo||0) + ' (' + (l.estado||'') + ')\n'; });
-
-    ctx += '\nINSUMOS EN STOCK (' + insumos.length + '):\n';
-    insumos.forEach(i => { ctx += '  ' + (i.nombre||'') + ': ' + (i.stock||0) + ' ' + (i.unidad||'') + ' (' + (i.categoria||'') + ')\n'; });
-
-    ctx += '\nTRABAJADORES (' + trabajadores.length + '):\n';
-    trabajadores.forEach(t => { ctx += '  ' + (t.nombre||'') + ' (' + (t.tipo||'?') + (t.cargo ? ', ' + t.cargo : '') + ')\n'; });
-
-    if (observaciones.length) {
-        ctx += '\nÚLTIMAS OBSERVACIONES:\n';
-        observaciones.forEach(o => { ctx += '  ' + (o.fechaISO||o.fecha||'') + ': ' + (o.parcelaNombre||'') + ' — ' + (o.descripcion||'').slice(0,80) + '\n'; });
+    // ── CLIMA ACTUAL ──
+    if (_climaActual.temp !== null) {
+        ctx += '\nCLIMA ACTUAL (La Loma, Carchi):\n';
+        ctx += '  Temperatura: ' + _climaActual.temp + '°C';
+        if (_climaActual.humidity !== null) ctx += ', Humedad: ' + _climaActual.humidity + '%';
+        if (_climaActual.precip  !== null) ctx += ', Precipitación: ' + _climaActual.precip + ' mm';
+        ctx += '\n';
     }
 
-    ctx += '\n— Tipos de labor válidos: Fumigación, Fertilización, Poda, Riego, Cosecha, Deshierbe, Inspección, Transporte, Mantenimiento, Otro';
-    ctx += '\n— Categorías de gasto válidas: Fertilizantes, Agroquímicos, Herramientas, Maquinaria, Activo fijo, Mano de obra, Transporte, Riego, Empaque, Combustible, Servicios, Mantenimiento, Otros';
+    // ── ÍNDICES SATELITALES (Sentinel Hub / Copernicus) ──
+    const _indCache = JSON.parse(localStorage.getItem('hda_indices_cache') || 'null');
+    if (_indCache && _indCache.data) {
+        ctx += '\nÍNDICES SATELITALES (actualizado: ' + (_indCache.fecha||'?') + '):\n';
+        Object.values(_indCache.data).forEach(p => {
+            if (!p.nombre) return;
+            const iv = k => { const r = p[k]; return (r && typeof r === 'object') ? r.value : r; };
+            const id = k => { const r = p[k]; return (r && typeof r === 'object') ? r.imageDate : null; };
+            ctx += '  ' + p.nombre + ':\n';
+            if (iv('ndvi') !== null && iv('ndvi') !== undefined) ctx += '    NDVI (salud vegetación): ' + (iv('ndvi')||0).toFixed(3) + (id('ndvi') ? ' [imagen: ' + id('ndvi') + ']' : '') + '\n';
+            if (iv('ndre') !== null && iv('ndre') !== undefined) ctx += '    NDRE (clorofila/nitrógeno): ' + (iv('ndre')||0).toFixed(3) + '\n';
+            if (iv('evi')  !== null && iv('evi')  !== undefined) ctx += '    EVI (vegetación densa): ' + (iv('evi')||0).toFixed(3) + '\n';
+            if (iv('ndmi') !== null && iv('ndmi') !== undefined) ctx += '    NDMI (estrés hídrico): ' + (iv('ndmi')||0).toFixed(3) + '\n';
+            if (iv('lst')  !== null && iv('lst')  !== undefined) ctx += '    LST (temperatura suelo): ' + (iv('lst')||0).toFixed(1) + '°C\n';
+        });
+    }
+
+    // ── ALERTAS SATELITALES ──
+    const _alertas = JSON.parse(localStorage.getItem('hda_alertas') || '[]');
+    if (_alertas.length) {
+        ctx += '\nALERTAS SATELITALES ACTIVAS (' + _alertas.length + '):\n';
+        _alertas.forEach(a => { ctx += '  ⚠️ ' + a.parcela + ': ' + a.msg + '\n'; });
+    }
+
+    // ── COSECHAS ──
+    ctx += '\nCOSECHAS últimos 90 días (' + cosechas.length + ' registros) — ' + totalCosechaKg.toFixed(0) + ' kg · $' + totalIngresoCosecha.toFixed(2) + ' ingresos:\n';
+    cosechas.slice(0,12).forEach(c => {
+        ctx += '  ' + (c.fechaISO||c.fecha||'') + ': ' + (c.parcela||'') + ' — ' + (c.kg||0) + ' kg a $' + (c.precio||0) + '/kg, calidad ' + (c.calidad||'?');
+        if (c.comprador) ctx += ', comprador: ' + c.comprador;
+        if (c.notas)     ctx += ' (' + c.notas + ')';
+        ctx += '\n';
+    });
+
+    // ── GASTOS ──
+    ctx += '\nGASTOS últimos 90 días (' + gastos.length + ' registros) — Total: $' + totalGastos.toFixed(2) + ':\n';
+    gastos.slice(0,12).forEach(g => {
+        ctx += '  ' + (g.fecha||'') + ': ' + (g.categoria||'') + ' — ' + (g.descripcion||'') + ': $' + (g.monto||0);
+        if (g.parcela) ctx += ' (' + g.parcela + ')';
+        ctx += '\n';
+    });
+
+    // ── LABORES ──
+    ctx += '\nLABORES últimos 90 días (' + labores.length + ' registros):\n';
+    labores.slice(0,12).forEach(l => {
+        ctx += '  ' + (l.fecha||'') + ': ' + (l.tipo||'') + ' en ' + (l.parcela||'?');
+        if (l.descripcion) ctx += ' — ' + l.descripcion;
+        ctx += ', $' + (l.costo||0) + ', ' + (l.trabajadores||0) + ' trabajadores, estado: ' + (l.estado||'') + '\n';
+    });
+
+    // ── TRATAMIENTOS ──
+    if (tratamientos.length) {
+        ctx += '\nTRATAMIENTOS últimos 90 días (' + tratamientos.length + '):\n';
+        tratamientos.forEach(t => {
+            ctx += '  ' + (t.fecha||'') + ': ' + (t.parcela||'') + ' — problema: ' + (t.problema||'') + ', producto: ' + (t.producto||'');
+            if (t.dosis)     ctx += ', dosis: ' + t.dosis;
+            if (t.resultado) ctx += ', resultado: ' + t.resultado;
+            if (t.fechaEval) ctx += ', eval: ' + t.fechaEval;
+            ctx += '\n';
+        });
+    }
+
+    // ── JORNADAS (mano de obra) ──
+    if (jornadas.length) {
+        ctx += '\nJORNADAS últimos 90 días (' + jornadas.length + ' registros) — Total pagado: $' + totalJornadas.toFixed(2) + ':\n';
+        jornadas.slice(0,15).forEach(j => {
+            ctx += '  ' + (j.fecha||'') + ': ' + (j.trabajadorNombre||'') + ' — ' + (j.actividad||'') + ', ' + (j.dias||0) + ' días, $' + (j.costo||0);
+            if (j.parcela) ctx += ' en ' + j.parcela;
+            ctx += '\n';
+        });
+    }
+
+    // ── MUESTREOS IA ──
+    if (muestreos.length) {
+        ctx += '\nMUESTREOS IA (últimos ' + muestreos.length + '):\n';
+        muestreos.forEach(m => {
+            const r = m.reporte || {};
+            ctx += '  ' + (m.fechaISO||m.fecha||'') + ': ' + (m.parcelaNombre||'') + ' — ' + (m.puntosAnalizados||0) + '/' + (m.totalPuntos||0) + ' puntos';
+            if (r.estado_general)             ctx += ', estado: ' + r.estado_general;
+            if (r.porcentaje_arboles_con_problema != null) ctx += ', ' + r.porcentaje_arboles_con_problema + '% árboles con problema';
+            if (r.problema_mas_frecuente)     ctx += ', problema: ' + r.problema_mas_frecuente;
+            if (r.recomendacion_urgente)      ctx += '\n    → Recomendación: ' + r.recomendacion_urgente;
+            ctx += '\n';
+        });
+    }
+
+    // ── INSUMOS ──
+    ctx += '\nINSUMOS EN STOCK (' + insumos.length + '):\n';
+    insumos.forEach(i => {
+        const bajo = (parseInt(i.stockMin)||0) > 0 && (parseFloat(i.stock)||0) <= (parseInt(i.stockMin)||0);
+        ctx += '  ' + (i.nombre||'') + ': ' + (i.stock||0) + ' ' + (i.unidad||'') + ' (' + (i.categoria||'') + ')';
+        if (i.precio)   ctx += ', $' + i.precio + '/' + (i.unidad||'u');
+        if (bajo)       ctx += ' ⚠️ BAJO MÍNIMO';
+        ctx += '\n';
+    });
+
+    // ── TRABAJADORES ──
+    const trabActivos = trabajadores.filter(t => t.estado === 'activo' || !t.estado);
+    ctx += '\nTRABAJADORES (' + trabajadores.length + ' total, ' + trabActivos.length + ' activos):\n';
+    trabajadores.forEach(t => {
+        ctx += '  ' + (t.nombre||'') + ': ' + (t.tipo||'?');
+        if (t.cargo)        ctx += ', ' + t.cargo;
+        if (t.salario)      ctx += ', salario $' + t.salario + '/mes';
+        if (t.jornal)       ctx += ', jornal $' + t.jornal + '/día';
+        if (t.estado)       ctx += ', ' + t.estado;
+        if (t.fechaIngreso) ctx += ', ingresó ' + t.fechaIngreso;
+        ctx += '\n';
+    });
+
+    // ── OBSERVACIONES ──
+    if (observaciones.length) {
+        ctx += '\nOBSERVACIONES DE CAMPO (últimas ' + observaciones.length + '):\n';
+        observaciones.forEach(o => {
+            ctx += '  ' + (o.fechaISO||o.fecha||'') + ': ' + (o.parcelaNombre||'') + ' — ' + (o.descripcion||'').slice(0,100);
+            if (o.severidad) ctx += ' [severidad: ' + o.severidad + ']';
+            ctx += '\n';
+        });
+    }
+
+    // ── REFERENCIA PARA ACCIONES ──
+    ctx += '\n— Tipos de labor: Fumigación, Fertilización, Poda, Riego, Cosecha, Deshierbe, Inspección, Transporte, Mantenimiento, Otro';
+    ctx += '\n— Categorías de gasto: Fertilizantes, Agroquímicos, Herramientas, Maquinaria, Activo fijo, Mano de obra, Transporte, Riego, Empaque, Combustible, Servicios, Mantenimiento, Otros';
     ctx += '\n— Calidades de cosecha: Extra, Primera, Segunda, Tercera';
     ctx += '\n— Estados de labor: pendiente, en progreso, completado';
+    ctx += '\n— Severidades de observación: leve, media, alta, crítica';
     return ctx;
 }
 
