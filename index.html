@@ -752,6 +752,9 @@
         <div class="nav-item" data-page="cosechas">
             <span class="icon">🧺</span> Cosechas
         </div>
+        <div class="nav-item" data-page="entregas">
+            <span class="icon">🚚</span> Entregas
+        </div>
         <div class="nav-item" data-page="poscosecha">
             <span class="icon">📦</span> Pos-cosecha
         </div>
@@ -958,6 +961,41 @@
                         </tr>
                     </thead>
                     <tbody id="tbody-cosechas"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── ENTREGAS (guías de remisión a planta) ── -->
+    <div id="page-entregas" class="page">
+        <div class="page-header">
+            <h2>🚚 Entregas a Planta</h2>
+            <div class="header-actions">
+                <button class="btn btn-outline btn-sm" onclick="exportCSV('entregas')">⬇ Exportar</button>
+                <button class="btn btn-primary" onclick="openEntrega()">＋ Nueva Entrega</button>
+            </div>
+        </div>
+        <p style="font-size:.82rem;color:var(--muted);margin:-6px 0 14px">
+            Cada envío de fruta a la planta (guía de remisión) con su <strong>lote de hacienda</strong>. Este código es tu ancla de trazabilidad: cuando Iteranza te lo devuelva en la liquidación, podrás cruzar campo ↔ planta.
+        </p>
+        <div id="entregas-resumen" class="stats-grid" style="margin-bottom:18px"></div>
+        <div class="card">
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Lote hacienda</th>
+                            <th>Parcela</th>
+                            <th>Kg Enviados</th>
+                            <th>Guía remisión</th>
+                            <th>Transporte</th>
+                            <th>Destino</th>
+                            <th>Notas</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-entregas"></tbody>
                 </table>
             </div>
         </div>
@@ -2238,6 +2276,58 @@
     </div>
 </div>
 
+<!-- MODAL ENTREGA A PLANTA -->
+<div class="modal-overlay" id="modal-entrega">
+    <div class="modal">
+        <h3>🚚 Registrar Entrega a Planta</h3>
+        <p style="font-size:.8rem;color:var(--muted);margin:-4px 0 12px">
+            El lote de hacienda se genera automáticamente pero puedes cambiarlo. Es el código que identificará esta fruta en toda la cadena.
+        </p>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Fecha de envío *</label>
+                <input type="date" id="e-fecha">
+            </div>
+            <div class="form-group">
+                <label>Lote de hacienda *</label>
+                <input type="text" id="e-lote" placeholder="LH-2026-001">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Parcela de origen</label>
+                <select id="e-parcela"></select>
+            </div>
+            <div class="form-group">
+                <label>Kg Enviados *</label>
+                <input type="number" id="e-kg" placeholder="1200" step="0.1" min="0">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Nº Guía de remisión</label>
+                <input type="text" id="e-guia" placeholder="001-001-000012345">
+            </div>
+            <div class="form-group">
+                <label>Transporte / Chofer</label>
+                <input type="text" id="e-transporte" placeholder="Placa o nombre">
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Destino</label>
+            <input type="text" id="e-destino" placeholder="Iteranza / Durexporta" value="Iteranza">
+        </div>
+        <div class="form-group">
+            <label>Notas</label>
+            <textarea id="e-notas" rows="2" placeholder="Observaciones de la entrega..."></textarea>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-cancel" onclick="closeModal('modal-entrega')">Cancelar</button>
+            <button class="btn btn-primary" onclick="saveEntrega()">Guardar Entrega</button>
+        </div>
+    </div>
+</div>
+
 <!-- MODAL EDITAR GASTO DE FACTURA (corrección manual opcional) -->
 <div class="modal-overlay" id="modal-edit-scan">
     <div class="modal" style="max-width:480px">
@@ -2638,7 +2728,7 @@ firebase.initializeApp(firebaseConfig);
 const _fdb = firebase.firestore();
 
 // ─── COLECCIONES ────────────────────────────────────────────
-const COLECCIONES = ['parcelas','cosechas','poscosecha','gastos','labores','insumos',
+const COLECCIONES = ['parcelas','cosechas','entregas','poscosecha','gastos','labores','insumos',
                      'trabajadores','jornadas','muestreos','observaciones',
                      'tratamientos','facturas_scan'];
 
@@ -2920,6 +3010,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
         document.getElementById('page-' + page).classList.add('active');
         el.classList.add('active');
         render();
+        if (page === 'entregas')      renderEntregas();
         if (page === 'poscosecha')    renderPoscosecha();
         if (page === 'graficas')      renderGraficas();
         if (page === 'rentabilidad')  renderRentabilidad();
@@ -2965,6 +3056,7 @@ function populateParcelaSelects() {
     const selects = [
         { id: 'l-parcela', default: 'Toda la finca' },
         { id: 'c-parcela', default: 'Toda la finca' },
+        { id: 'e-parcela', default: 'Varias / mezcla' },
         { id: 'g-parcela', default: 'General' }
     ];
     selects.forEach(({ id, default: def }) => {
@@ -3595,6 +3687,7 @@ function render() {
     renderParcelas();
     renderLabores();
     renderCosechas();
+    renderEntregas();
     renderPoscosecha();
     renderGastos();
     renderInsumos();
@@ -3880,6 +3973,99 @@ function migrarIteranzaAPoscosecha() {
 
     localStorage.setItem('hda_migr_poscosecha', 'done');
     console.log(`[migración] ${viejos.length} registro(s) Iteranza movidos a poscosecha.`);
+}
+
+// ── ENTREGAS A PLANTA (guías de remisión) ───────────────────
+// Sugiere el siguiente lote de hacienda: LH-<año>-<correlativo>
+function _siguienteLoteHacienda() {
+    const anio = new Date().getFullYear();
+    const pref = 'LH-' + anio + '-';
+    const nums = DB.get('entregas')
+        .map(e => (e.loteHacienda || '').match(new RegExp('^' + pref + '(\\d+)$')))
+        .filter(Boolean)
+        .map(m => parseInt(m[1]) || 0);
+    const sig = (nums.length ? Math.max(...nums) : 0) + 1;
+    return pref + String(sig).padStart(3, '0');
+}
+
+function openEntrega() {
+    openModal('modal-entrega'); // puebla selects de parcela y muestra el modal
+    document.getElementById('e-fecha').value      = todayISO();
+    document.getElementById('e-lote').value       = _siguienteLoteHacienda();
+    document.getElementById('e-kg').value         = '';
+    document.getElementById('e-guia').value       = '';
+    document.getElementById('e-transporte').value = '';
+    document.getElementById('e-destino').value    = 'Iteranza';
+    document.getElementById('e-notas').value      = '';
+}
+
+function saveEntrega() {
+    const fecha = val('e-fecha');
+    const lote  = val('e-lote');
+    const kg    = numVal('e-kg');
+    if (!fecha) return alert('La fecha de envío es obligatoria.');
+    if (!lote)  return alert('El lote de hacienda es obligatorio (es tu ancla de trazabilidad).');
+    if (!kg)    return alert('Ingresa los kg enviados.');
+
+    // Evitar lotes de hacienda duplicados
+    if (DB.get('entregas').some(e => (e.loteHacienda||'').toLowerCase() === lote.toLowerCase())) {
+        if (!confirm(`⚠️ Ya existe una entrega con el lote "${lote}".\n¿Guardar de todas formas?`)) return;
+    }
+
+    DB.add('entregas', {
+        fecha,
+        loteHacienda: lote,
+        parcela:    val('e-parcela'),
+        kg,
+        guia:       val('e-guia'),
+        transporte: val('e-transporte'),
+        destino:    val('e-destino') || 'Iteranza',
+        loteIteranza: '',   // se llena luego, cuando la planta devuelva su referencia
+        notas:      val('e-notas')
+    });
+    closeModal('modal-entrega');
+    renderEntregas();
+}
+
+function renderEntregas() {
+    const data  = DB.get('entregas');
+    const tbody = document.getElementById('tbody-entregas');
+    const resum = document.getElementById('entregas-resumen');
+    if (!tbody) return;
+
+    // Resumen: enviado vs recibido en planta (merma)
+    const totalEnviado  = data.reduce((s,e) => s + (parseFloat(e.kg)||0), 0);
+    const totalRecibido = DB.get('poscosecha').reduce((s,p) => s + (parseFloat(p.kgRecibidos)||0), 0);
+    const merma    = totalEnviado - totalRecibido;
+    const mermaPct = totalEnviado > 0 ? (merma / totalEnviado * 100) : 0;
+    if (resum) {
+        resum.innerHTML = `
+            <div class="stat-card highlight"><div class="s-label">Total Enviado</div><div class="s-value">${fmt.num(Math.round(totalEnviado))}<span style="font-size:1rem;font-weight:400"> kg</span></div><div class="s-sub">${data.length} entrega${data.length!==1?'s':''}</div></div>
+            <div class="stat-card"><div class="s-label">Recibido en Planta</div><div class="s-value">${fmt.num(Math.round(totalRecibido))}<span style="font-size:1rem;font-weight:400"> kg</span></div><div class="s-sub">de pos-cosecha</div></div>
+            <div class="stat-card ${merma>0?'warn':''}"><div class="s-label">Merma campo → planta</div><div class="s-value" style="font-size:1.5rem">${totalRecibido>0 ? fmt.num(Math.round(merma))+' kg' : '—'}</div><div class="s-sub">${totalRecibido>0 ? mermaPct.toFixed(1)+'% del enviado' : 'sin datos de planta'}</div></div>`;
+    }
+
+    if (!data.length) {
+        tbody.innerHTML = emptyRow(9, '🚚', 'No hay entregas registradas. Usa "＋ Nueva Entrega".');
+        return;
+    }
+    const ordenado = [...data].sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''));
+    tbody.innerHTML = ordenado.map(e => `
+        <tr>
+            <td style="white-space:nowrap">${fmt.date(e.fecha)}</td>
+            <td><strong>${e.loteHacienda || '—'}</strong>${e.loteIteranza ? `<br><small style="color:#888">↔ ${e.loteIteranza}</small>` : ''}</td>
+            <td>${e.parcela || '—'}</td>
+            <td><strong>${fmt.kg(e.kg)}</strong></td>
+            <td style="font-size:.8rem;color:var(--muted)">${e.guia || '—'}</td>
+            <td style="font-size:.85rem">${e.transporte || '—'}</td>
+            <td>${e.destino || '—'}</td>
+            <td style="max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${e.notas||''}">${e.notas || '—'}</td>
+            <td><button class="btn btn-danger-ghost" onclick="del('entregas', ${e.id})">✕</button></td>
+        </tr>`).join('') + `<tr style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
+        <td colspan="3" style="padding:10px 12px">TOTAL</td>
+        <td>${fmt.kg(totalEnviado)}</td>
+        <td colspan="5"></td>
+    </tr>`;
 }
 
 function renderGastos() {
@@ -8031,6 +8217,7 @@ function _aiConstruirContexto() {
 
     const parcelas     = DB.get('parcelas');
     const cosechas     = DB.get('cosechas').filter(c => (c.fechaISO||c.fecha||'') >= hace90).slice(0, 20);
+    const entregas     = DB.get('entregas').filter(e => (e.fecha||'') >= hace90).slice(0, 20);
     const poscosecha   = DB.get('poscosecha').filter(p => (p.fecha||'') >= hace90).slice(0, 15);
     const gastos       = DB.get('gastos').filter(g => (g.fecha||'') >= hace90).slice(0, 20);
     const labores      = DB.get('labores').filter(l => (l.fecha||'') >= hace90).slice(0, 20);
@@ -8123,6 +8310,22 @@ function _aiConstruirContexto() {
         if (c.notas)     ctx += ' (' + c.notas + ')';
         ctx += '\n';
     });
+
+    // ── ENTREGAS A PLANTA ──
+    const totalEnviado = entregas.reduce((s,e) => s + (parseFloat(e.kg)||0), 0);
+    ctx += '\nENTREGAS A PLANTA últimos 90 días (' + entregas.length + ' guías) — ' + totalEnviado.toFixed(0) + ' kg enviados:\n';
+    if (!entregas.length) ctx += '  (sin entregas registradas)\n';
+    entregas.slice(0,12).forEach(e => {
+        ctx += '  ' + (e.fecha||'') + ': lote ' + (e.loteHacienda||'?') + ' — ' + (parseFloat(e.kg)||0).toFixed(0) + ' kg';
+        if (e.parcela)      ctx += ' de ' + e.parcela;
+        if (e.destino)      ctx += ' → ' + e.destino;
+        if (e.loteIteranza) ctx += ' (lote planta: ' + e.loteIteranza + ')';
+        ctx += '\n';
+    });
+    if (entregas.length && totalKgPlanta > 0) {
+        const merma = totalEnviado - totalKgPlanta;
+        ctx += '  MERMA campo→planta: ' + merma.toFixed(0) + ' kg (' + (totalEnviado>0?(merma/totalEnviado*100).toFixed(1):'0') + '% del enviado)\n';
+    }
 
     // ── POS-COSECHA (planta / Iteranza) ──
     ctx += '\nPOS-COSECHA / PLANTA últimos 90 días (' + poscosecha.length + ' informes) — ' + totalKgPlanta.toFixed(0) + ' kg recibidos · $' + totalIngresoReal.toFixed(2) + ' facturado:\n';
