@@ -7764,6 +7764,8 @@ function toggleAsistenteIA() {
     document.getElementById('ai-panel').classList.toggle('open', _chatPanelOpen);
     if (_chatPanelOpen) {
         if (_chatHistorial.length === 0) _aiMensajeBienvenida();
+        // Cargar clima si no está disponible aún
+        if (_climaActual.temp === null) fetchClima();
         setTimeout(() => document.getElementById('ai-input').focus(), 220);
     }
 }
@@ -7920,29 +7922,35 @@ function _aiConstruirContexto() {
     });
 
     // ── CLIMA ACTUAL ──
+    ctx += '\nCLIMA ACTUAL (La Loma, Carchi): ';
     if (_climaActual.temp !== null) {
-        ctx += '\nCLIMA ACTUAL (La Loma, Carchi):\n';
-        ctx += '  Temperatura: ' + _climaActual.temp + '°C';
-        if (_climaActual.humidity !== null) ctx += ', Humedad: ' + _climaActual.humidity + '%';
-        if (_climaActual.precip  !== null) ctx += ', Precipitación: ' + _climaActual.precip + ' mm';
-        ctx += '\n';
+        ctx += _climaActual.temp + '°C';
+        if (_climaActual.humidity !== null) ctx += ', humedad ' + _climaActual.humidity + '%';
+        if (_climaActual.precip  !== null) ctx += ', precipitación ' + _climaActual.precip + ' mm';
+    } else {
+        ctx += 'no cargado aún (se obtiene al abrir el módulo Mapa)';
     }
+    ctx += '\n';
 
     // ── ÍNDICES SATELITALES (Sentinel Hub / Copernicus) ──
     const _indCache = JSON.parse(localStorage.getItem('hda_indices_cache') || 'null');
     if (_indCache && _indCache.data) {
-        ctx += '\nÍNDICES SATELITALES (actualizado: ' + (_indCache.fecha||'?') + '):\n';
+        ctx += '\nÍNDICES SATELITALES — último análisis: ' + (_indCache.fecha||'?') + '\n';
         Object.values(_indCache.data).forEach(p => {
             if (!p.nombre) return;
             const iv = k => { const r = p[k]; return (r && typeof r === 'object') ? r.value : r; };
             const id = k => { const r = p[k]; return (r && typeof r === 'object') ? r.imageDate : null; };
-            ctx += '  ' + p.nombre + ':\n';
-            if (iv('ndvi') !== null && iv('ndvi') !== undefined) ctx += '    NDVI (salud vegetación): ' + (iv('ndvi')||0).toFixed(3) + (id('ndvi') ? ' [imagen: ' + id('ndvi') + ']' : '') + '\n';
-            if (iv('ndre') !== null && iv('ndre') !== undefined) ctx += '    NDRE (clorofila/nitrógeno): ' + (iv('ndre')||0).toFixed(3) + '\n';
-            if (iv('evi')  !== null && iv('evi')  !== undefined) ctx += '    EVI (vegetación densa): ' + (iv('evi')||0).toFixed(3) + '\n';
-            if (iv('ndmi') !== null && iv('ndmi') !== undefined) ctx += '    NDMI (estrés hídrico): ' + (iv('ndmi')||0).toFixed(3) + '\n';
-            if (iv('lst')  !== null && iv('lst')  !== undefined) ctx += '    LST (temperatura suelo): ' + (iv('lst')||0).toFixed(1) + '°C\n';
+            ctx += '  ' + p.nombre + ': ';
+            const partes = [];
+            if (iv('ndvi') != null) partes.push('NDVI=' + (iv('ndvi')||0).toFixed(3) + (id('ndvi') ? '['+id('ndvi')+']' : ''));
+            if (iv('ndre') != null) partes.push('NDRE=' + (iv('ndre')||0).toFixed(3));
+            if (iv('evi')  != null) partes.push('EVI='  + (iv('evi') ||0).toFixed(3));
+            if (iv('ndmi') != null) partes.push('NDMI=' + (iv('ndmi')||0).toFixed(3));
+            if (iv('lst')  != null) partes.push('LST='  + (iv('lst') ||0).toFixed(1)+'°C');
+            ctx += (partes.length ? partes.join(', ') : 'sin datos') + '\n';
         });
+    } else {
+        ctx += '\nÍNDICES SATELITALES: no disponibles. Para acceder a NDVI/NDRE/EVI/NDMI/LST el usuario debe ir al módulo Mapa y hacer clic en "Actualizar índices".\n';
     }
 
     // ── ALERTAS SATELITALES ──
@@ -7950,6 +7958,8 @@ function _aiConstruirContexto() {
     if (_alertas.length) {
         ctx += '\nALERTAS SATELITALES ACTIVAS (' + _alertas.length + '):\n';
         _alertas.forEach(a => { ctx += '  ⚠️ ' + a.parcela + ': ' + a.msg + '\n'; });
+    } else {
+        ctx += '\nALERTAS SATELITALES: ninguna activa.\n';
     }
 
     // ── COSECHAS ──
