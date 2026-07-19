@@ -568,6 +568,159 @@
             font-weight: 600;
             cursor: pointer;
         }
+
+        /* ═══ ASISTENTE IA ═══════════════════════════════════════════ */
+        #ai-fab {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            font-size: 1.4rem;
+            cursor: pointer;
+            box-shadow: 0 4px 16px rgba(0,0,0,.3);
+            z-index: 9000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform .2s, box-shadow .2s;
+        }
+        #ai-fab:hover { transform: scale(1.08); box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+
+        #ai-panel {
+            position: fixed;
+            bottom: 90px;
+            right: 24px;
+            width: 380px;
+            max-width: calc(100vw - 32px);
+            height: 520px;
+            max-height: calc(100vh - 110px);
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0,0,0,.25);
+            display: flex;
+            flex-direction: column;
+            z-index: 8999;
+            overflow: hidden;
+            transform: scale(.9) translateY(20px);
+            opacity: 0;
+            pointer-events: none;
+            transition: transform .2s ease, opacity .2s ease;
+        }
+        #ai-panel.open {
+            transform: scale(1) translateY(0);
+            opacity: 1;
+            pointer-events: all;
+        }
+        #ai-header {
+            background: var(--primary);
+            color: #fff;
+            padding: 14px 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+        #ai-header h3 { margin: 0; font-size: .95rem; flex: 1; }
+        #ai-header small { font-size: .72rem; opacity: .75; }
+        #ai-close { background: none; border: none; color: #fff; font-size: 1.2rem; cursor: pointer; opacity: .75; padding: 0 4px; }
+        #ai-close:hover { opacity: 1; }
+        #ai-msgs {
+            flex: 1;
+            overflow-y: auto;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: #f8faf9;
+        }
+        .ai-msg {
+            max-width: 85%;
+            padding: 9px 13px;
+            border-radius: 14px;
+            font-size: .85rem;
+            line-height: 1.55;
+            word-break: break-word;
+            white-space: pre-wrap;
+        }
+        .ai-msg.ai   { background: #fff; border: 1px solid #e2e8e5; align-self: flex-start; border-bottom-left-radius: 4px; }
+        .ai-msg.user { background: var(--primary); color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; }
+        .ai-msg.typing { color: #999; font-style: italic; align-self: flex-start; }
+        .ai-accion-card {
+            background: #fff;
+            border: 1.5px solid var(--primary-light);
+            border-radius: 10px;
+            padding: 10px 13px;
+            font-size: .82rem;
+            align-self: flex-start;
+            max-width: 92%;
+            line-height: 1.55;
+        }
+        .ai-accion-card strong { color: var(--primary); display: block; margin-bottom: 5px; font-size: .88rem; }
+        .ai-accion-card .ai-btn-ok {
+            margin-top: 8px;
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            padding: 5px 14px;
+            border-radius: 8px;
+            font-size: .8rem;
+            cursor: pointer;
+        }
+        .ai-accion-card .ai-btn-ok:hover { background: var(--primary-dark); }
+        .ai-accion-card .ai-btn-cancel {
+            margin-top: 8px;
+            margin-left: 6px;
+            background: transparent;
+            color: var(--muted);
+            border: 1px solid #ddd;
+            padding: 5px 12px;
+            border-radius: 8px;
+            font-size: .8rem;
+            cursor: pointer;
+        }
+        #ai-input-row {
+            display: flex;
+            gap: 8px;
+            padding: 12px 14px;
+            border-top: 1px solid #e8ede9;
+            background: #fff;
+            flex-shrink: 0;
+            align-items: flex-end;
+        }
+        #ai-input {
+            flex: 1;
+            border: 1.5px solid #dde;
+            border-radius: 20px;
+            padding: 8px 14px;
+            font-size: .85rem;
+            outline: none;
+            resize: none;
+            max-height: 90px;
+            line-height: 1.4;
+            font-family: inherit;
+        }
+        #ai-input:focus { border-color: var(--primary-light); }
+        #ai-send {
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            border-radius: 50%;
+            width: 38px;
+            height: 38px;
+            font-size: 1rem;
+            cursor: pointer;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #ai-send:hover { background: var(--primary-dark); }
+        #ai-send:disabled { opacity: .4; cursor: default; }
     </style>
 </head>
 <body>
@@ -7597,6 +7750,299 @@ function importarDatosCampo(event) {
 
 // Arrancar con pantalla de PIN — no ejecutar render() hasta que se valide
 // (render/loadApiKey/renderFacturasHistory se llaman desde entrarConRol())
+
+// ═══════════════════════════════════════════════════════════════════════
+//  ASISTENTE IA — Chat con acceso a datos de la finca
+// ═══════════════════════════════════════════════════════════════════════
+
+let _chatHistorial = [];   // [{role, content}]
+let _chatPanelOpen = false;
+let _accionesCache = [];   // acciones propuestas por el AI
+
+function toggleAsistenteIA() {
+    _chatPanelOpen = !_chatPanelOpen;
+    document.getElementById('ai-panel').classList.toggle('open', _chatPanelOpen);
+    if (_chatPanelOpen) {
+        if (_chatHistorial.length === 0) _aiMensajeBienvenida();
+        setTimeout(() => document.getElementById('ai-input').focus(), 220);
+    }
+}
+
+function _aiMensajeBienvenida() {
+    _aiRenderMsg('ai',
+        '¡Hola! Soy tu asistente de hacienda 🌱\n\nPuedo responder preguntas sobre tus datos y también registrar labores, gastos, cosechas u observaciones con solo pedírmelo. ¿En qué te ayudo?'
+    );
+}
+
+function _aiRenderMsg(rol, texto) {
+    const msgs = document.getElementById('ai-msgs');
+    if (!msgs) return;
+    const div = document.createElement('div');
+    div.className = 'ai-msg ' + rol;
+    div.textContent = texto;
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+}
+
+function _aiRenderAccionCard(accion, idx) {
+    const msgs = document.getElementById('ai-msgs');
+    if (!msgs) return;
+    const etiquetas = {
+        add_labor:       '📋 Registrar Labor',
+        add_gasto:       '💸 Registrar Gasto',
+        add_cosecha:     '🧺 Registrar Cosecha',
+        add_observacion: '🌿 Registrar Observación',
+        add_insumo:      '🧪 Agregar Insumo'
+    };
+    const card = document.createElement('div');
+    card.className = 'ai-accion-card';
+    card.id = 'ai-accion-' + idx;
+    card.innerHTML =
+        '<strong>' + (etiquetas[accion.tipo] || '⚡ Acción') + '</strong>' +
+        '<div style="color:#444">' + _aiResumenAccion(accion) + '</div>' +
+        '<button class="ai-btn-ok"    onclick="aiEjecutarAccion(' + idx + ')">✅ Confirmar</button>' +
+        '<button class="ai-btn-cancel" onclick="aiCancelarAccion(' + idx + ')">✕ Cancelar</button>';
+    msgs.appendChild(card);
+    msgs.scrollTop = msgs.scrollHeight;
+}
+
+function _aiResumenAccion(accion) {
+    const d = accion.datos;
+    switch (accion.tipo) {
+        case 'add_labor':      return (d.fecha||'') + ' · ' + (d.tipo||'') + ' en ' + (d.parcela||'') + '\n' + (d.descripcion||'') + '\nCosto: $' + (d.costo||0) + ' · ' + (d.estado||'');
+        case 'add_gasto':      return (d.fecha||'') + ' · ' + (d.categoria||'') + '\n' + (d.descripcion||'') + '\nMonto: $' + (d.monto||0) + (d.parcela ? ' · ' + d.parcela : '');
+        case 'add_cosecha':    return (d.fecha||'') + ' · ' + (d.parcela||'') + '\n' + (d.kg||0) + 'kg a $' + (d.precio||0) + '/kg · ' + (d.calidad||'') + (d.comprador ? '\nComprador: ' + d.comprador : '');
+        case 'add_observacion':return (d.fechaISO||d.fecha||'') + ' · ' + (d.parcelaNombre||'') + '\n' + (d.descripcion||'') + (d.severidad ? '\nSeveridad: ' + d.severidad : '');
+        case 'add_insumo':     return (d.nombre||'') + ' (' + (d.categoria||'') + ')\nStock: ' + (d.stock||0) + ' ' + (d.unidad||'') + (d.precio ? ' · $' + d.precio : '');
+        default:               return JSON.stringify(d);
+    }
+}
+
+function aiEjecutarAccion(idx) {
+    const accion = _accionesCache[idx];
+    if (!accion) return;
+    const d = accion.datos;
+    try {
+        switch (accion.tipo) {
+            case 'add_labor':
+                DB.add('labores', {
+                    fecha: d.fecha||'', tipo: d.tipo||'', parcela: d.parcela||'',
+                    descripcion: d.descripcion||'', trabajadores: parseInt(d.trabajadores)||0,
+                    costo: parseFloat(d.costo)||0, estado: d.estado||'completado'
+                });
+                break;
+            case 'add_gasto':
+                DB.add('gastos', {
+                    fecha: d.fecha||'', categoria: d.categoria||'', descripcion: d.descripcion||'',
+                    monto: parseFloat(d.monto)||0, parcela: d.parcela||'', comprobante: d.comprobante||''
+                });
+                break;
+            case 'add_cosecha':
+                DB.add('cosechas', {
+                    fecha: d.fecha||'', parcela: d.parcela||'', kg: parseFloat(d.kg)||0,
+                    precio: parseFloat(d.precio)||0, comprador: d.comprador||'',
+                    calidad: d.calidad||'', notas: d.notas||''
+                });
+                break;
+            case 'add_observacion':
+                DB.add('observaciones', {
+                    fecha: d.fecha||d.fechaISO||'', fechaISO: d.fechaISO||d.fecha||'',
+                    parcelaId: null, parcelaNombre: d.parcelaNombre||'',
+                    descripcion: d.descripcion||'', severidad: d.severidad||null,
+                    lat: null, lng: null, foto: null, plantixDiagnostico: null
+                });
+                break;
+            case 'add_insumo':
+                DB.add('insumos', {
+                    nombre: d.nombre||'', categoria: d.categoria||'',
+                    stock: parseFloat(d.stock)||0, unidad: d.unidad||'',
+                    stockMin: parseFloat(d.stockMin)||0, precio: parseFloat(d.precio)||0,
+                    proveedor: d.proveedor||''
+                });
+                break;
+        }
+        const card = document.getElementById('ai-accion-' + idx);
+        if (card) card.innerHTML = '<span style="color:var(--primary);font-size:.85rem">✅ Registrado correctamente.</span>';
+        render();
+    } catch(e) {
+        alert('Error al guardar: ' + e.message);
+    }
+}
+
+function aiCancelarAccion(idx) {
+    const card = document.getElementById('ai-accion-' + idx);
+    if (card) card.innerHTML = '<span style="color:#999;font-size:.82rem">Acción cancelada.</span>';
+}
+
+function _aiConstruirContexto() {
+    const hoy    = new Date().toISOString().split('T')[0];
+    const hace90 = new Date(Date.now() - 90*24*60*60*1000).toISOString().split('T')[0];
+
+    const parcelas     = DB.get('parcelas');
+    const cosechas     = DB.get('cosechas').filter(c => (c.fechaISO||c.fecha||'') >= hace90).slice(0, 20);
+    const gastos       = DB.get('gastos').filter(g => (g.fecha||'') >= hace90).slice(0, 20);
+    const labores      = DB.get('labores').filter(l => (l.fecha||'') >= hace90).slice(0, 20);
+    const insumos      = DB.get('insumos').slice(0, 20);
+    const trabajadores = DB.get('trabajadores').slice(0, 15);
+    const observaciones= DB.get('observaciones').slice(0, 8);
+
+    const totalCosechaKg  = cosechas.reduce((s,c) => s + (parseFloat(c.kg)||0), 0);
+    const totalGastos     = gastos.reduce((s,g) => s + (parseFloat(g.monto)||0), 0);
+    const totalIngresoCosecha = cosechas.reduce((s,c) => s + (parseFloat(c.kg)||0)*(parseFloat(c.precio)||0), 0);
+
+    let ctx = 'FECHA HOY: ' + hoy + '\n';
+    ctx += 'FINCA: Mi Hacienda — Aguacates, La Loma, Carchi, Ecuador\n\n';
+
+    ctx += 'PARCELAS (' + parcelas.length + '):\n';
+    parcelas.forEach(p => { ctx += '  - ' + p.nombre + ': ' + (p.ha||'?') + 'ha, variedad ' + (p.variedad||'?') + '\n'; });
+
+    ctx += '\nCOSECHAS últimos 90 días (' + cosechas.length + ' registros) — Total: ' + totalCosechaKg.toFixed(0) + 'kg, Ingresos: $' + totalIngresoCosecha.toFixed(2) + '\n';
+    cosechas.slice(0,10).forEach(c => { ctx += '  ' + (c.fechaISO||c.fecha||'') + ': ' + (c.parcela||'') + ' — ' + (c.kg||0) + 'kg a $' + (c.precio||0) + '/kg (' + (c.calidad||'?') + ')\n'; });
+
+    ctx += '\nGASTOS últimos 90 días (' + gastos.length + ' registros) — Total: $' + totalGastos.toFixed(2) + '\n';
+    gastos.slice(0,10).forEach(g => { ctx += '  ' + (g.fecha||'') + ': ' + (g.categoria||'') + ' — ' + (g.descripcion||'') + ': $' + (g.monto||0) + ' (' + (g.parcela||'general') + ')\n'; });
+
+    ctx += '\nLABORES últimos 90 días (' + labores.length + ' registros):\n';
+    labores.slice(0,10).forEach(l => { ctx += '  ' + (l.fecha||'') + ': ' + (l.tipo||'') + ' en ' + (l.parcela||'?') + ' — ' + (l.descripcion||'') + ' $' + (l.costo||0) + ' (' + (l.estado||'') + ')\n'; });
+
+    ctx += '\nINSUMOS EN STOCK (' + insumos.length + '):\n';
+    insumos.forEach(i => { ctx += '  ' + (i.nombre||'') + ': ' + (i.stock||0) + ' ' + (i.unidad||'') + ' (' + (i.categoria||'') + ')\n'; });
+
+    ctx += '\nTRABAJADORES (' + trabajadores.length + '):\n';
+    trabajadores.forEach(t => { ctx += '  ' + (t.nombre||'') + ' (' + (t.tipo||'?') + (t.cargo ? ', ' + t.cargo : '') + ')\n'; });
+
+    if (observaciones.length) {
+        ctx += '\nÚLTIMAS OBSERVACIONES:\n';
+        observaciones.forEach(o => { ctx += '  ' + (o.fechaISO||o.fecha||'') + ': ' + (o.parcelaNombre||'') + ' — ' + (o.descripcion||'').slice(0,80) + '\n'; });
+    }
+
+    ctx += '\n— Tipos de labor válidos: Fumigación, Fertilización, Poda, Riego, Cosecha, Deshierbe, Inspección, Transporte, Mantenimiento, Otro';
+    ctx += '\n— Categorías de gasto válidas: Fertilizantes, Agroquímicos, Herramientas, Maquinaria, Activo fijo, Mano de obra, Transporte, Riego, Empaque, Combustible, Servicios, Mantenimiento, Otros';
+    ctx += '\n— Calidades de cosecha: Extra, Primera, Segunda, Tercera';
+    ctx += '\n— Estados de labor: pendiente, en progreso, completado';
+    return ctx;
+}
+
+async function enviarMensajeIA() {
+    const input   = document.getElementById('ai-input');
+    const sendBtn = document.getElementById('ai-send');
+    const msgs    = document.getElementById('ai-msgs');
+    const apiKey  = localStorage.getItem('hda_apikey') || '';
+    const texto   = input.value.trim();
+
+    if (!texto) return;
+    if (!apiKey) {
+        _aiRenderMsg('ai', '⚠️ Primero guarda tu API Key de Anthropic en la sección de configuración del Dashboard.');
+        return;
+    }
+
+    input.value = '';
+    input.style.height = 'auto';
+    sendBtn.disabled = true;
+
+    _aiRenderMsg('user', texto);
+    _chatHistorial.push({ role: 'user', content: texto });
+
+    const typing = document.createElement('div');
+    typing.className = 'ai-msg typing';
+    typing.id = 'ai-typing';
+    typing.textContent = 'Analizando datos de la finca...';
+    msgs.appendChild(typing);
+    msgs.scrollTop = msgs.scrollHeight;
+
+    const hoy = new Date().toISOString().split('T')[0];
+    const systemPrompt =
+        'Eres el asistente IA de "Mi Hacienda — Aguacates", una finca de aguacate en La Loma, Carchi, Ecuador.\n\n' +
+        'Puedes: (1) responder preguntas sobre los datos de la finca, (2) proponer registrar datos cuando el usuario lo pida.\n\n' +
+        'Cuando el usuario quiera registrar algo, incluye AL FINAL de tu respuesta una línea con el bloque de acción:\n' +
+        '[[ACCIÓN:{"tipo":"add_labor","datos":{"fecha":"YYYY-MM-DD","tipo":"Fumigación","parcela":"NombreParcela","descripcion":"detalle","trabajadores":2,"costo":50,"estado":"completado"}}]]\n\n' +
+        'Acciones disponibles y campos:\n' +
+        'add_gasto     → {fecha, categoria, descripcion, monto, parcela}\n' +
+        'add_cosecha   → {fecha, parcela, kg, precio, comprador, calidad}\n' +
+        'add_observacion → {fecha, fechaISO, parcelaNombre, descripcion, severidad}\n' +
+        'add_insumo    → {nombre, categoria, stock, unidad, precio}\n\n' +
+        'REGLAS:\n' +
+        '- Si faltan datos clave (fecha, monto, kg, etc.) PREGUNTA antes de proponer la acción.\n' +
+        '- Usa los nombres exactos de parcelas del contexto.\n' +
+        '- Fecha siempre en formato YYYY-MM-DD (hoy es ' + hoy + ').\n' +
+        '- Responde siempre en español, de forma concisa.\n' +
+        '- Para informes, calcula totales del contexto y preséntalo claramente.\n\n' +
+        '--- CONTEXTO ACTUAL DE LA FINCA ---\n' +
+        _aiConstruirContexto();
+
+    try {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01',
+                'anthropic-dangerous-direct-browser-access': 'true'
+            },
+            body: JSON.stringify({
+                model: 'claude-opus-4-6',
+                max_tokens: 1024,
+                system: systemPrompt,
+                messages: _chatHistorial.slice(-12)
+            })
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error?.message || 'Error ' + res.status);
+
+        let respuesta = data.content?.[0]?.text || '';
+
+        // Extraer bloques [[ACCIÓN:{...}]]
+        const accionRegex = /\[\[ACCIÓN:([\s\S]*?)\]\]/g;
+        const acciones = [];
+        let m;
+        while ((m = accionRegex.exec(respuesta)) !== null) {
+            try { acciones.push(JSON.parse(m[1].trim())); } catch(e) { /* JSON malformado, ignorar */ }
+        }
+        const textoLimpio = respuesta.replace(/\[\[ACCIÓN:[\s\S]*?\]\]/g, '').trim();
+
+        document.getElementById('ai-typing')?.remove();
+
+        if (textoLimpio) {
+            _aiRenderMsg('ai', textoLimpio);
+            _chatHistorial.push({ role: 'assistant', content: textoLimpio });
+        }
+
+        acciones.forEach(accion => {
+            const idx = _accionesCache.length;
+            _accionesCache.push(accion);
+            _aiRenderAccionCard(accion, idx);
+        });
+
+    } catch(e) {
+        document.getElementById('ai-typing')?.remove();
+        _aiRenderMsg('ai', '⚠️ Error al contactar la IA: ' + e.message);
+    } finally {
+        sendBtn.disabled = false;
+        input.focus();
+    }
+}
 </script>
+
+<!-- ═══ ASISTENTE IA — Botón flotante + Panel ════════════════════════ -->
+<button id="ai-fab" onclick="toggleAsistenteIA()" title="Asistente IA">🤖</button>
+
+<div id="ai-panel">
+    <div id="ai-header">
+        <span style="font-size:1.25rem">🌱</span>
+        <div style="flex:1">
+            <h3>Asistente Hacienda</h3>
+            <small>Pregunta o registra datos por chat</small>
+        </div>
+        <button id="ai-close" onclick="toggleAsistenteIA()" title="Cerrar">✕</button>
+    </div>
+    <div id="ai-msgs"></div>
+    <div id="ai-input-row">
+        <textarea id="ai-input" placeholder="Pregunta algo o di 'registra una labor...'" rows="1"
+            oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,90)+'px'"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMensajeIA();}"></textarea>
+        <button id="ai-send" onclick="enviarMensajeIA()" title="Enviar">➤</button>
+    </div>
+</div>
 </body>
 </html>
