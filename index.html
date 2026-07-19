@@ -752,6 +752,9 @@
         <div class="nav-item" data-page="cosechas">
             <span class="icon">🧺</span> Cosechas
         </div>
+        <div class="nav-item" data-page="poscosecha">
+            <span class="icon">📦</span> Pos-cosecha
+        </div>
     </div>
 
     <div class="nav-group">
@@ -926,16 +929,18 @@
         </div>
     </div>
 
-    <!-- ── COSECHAS ── -->
+    <!-- ── COSECHAS (campo) ── -->
     <div id="page-cosechas" class="page">
         <div class="page-header">
-            <h2>🧺 Registro de Cosechas</h2>
+            <h2>🧺 Cosecha de Campo</h2>
             <div class="header-actions">
                 <button class="btn btn-outline btn-sm" onclick="exportCSV('cosechas')">⬇ Exportar</button>
-                <button class="btn btn-outline btn-sm" onclick="openIteranza()" style="border-color:#2196f3;color:#2196f3" title="Registrar informe mensual Iteranza/Durexporta">📋 Informe Iteranza</button>
                 <button class="btn btn-primary" onclick="openModal('modal-cosecha')">＋ Nueva Cosecha</button>
             </div>
         </div>
+        <p style="font-size:.82rem;color:var(--muted);margin:-6px 0 14px">
+            Volumen de fruta bajada del árbol, por parcela. Para los resultados de planta (export, local, rechazo, liquidación) usa el módulo <strong>📦 Pos-cosecha</strong>.
+        </p>
         <div class="card">
             <div class="table-wrap">
                 <table>
@@ -953,6 +958,43 @@
                         </tr>
                     </thead>
                     <tbody id="tbody-cosechas"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── POS-COSECHA (planta / empaque) ── -->
+    <div id="page-poscosecha" class="page">
+        <div class="page-header">
+            <h2>📦 Pos-cosecha</h2>
+            <div class="header-actions">
+                <button class="btn btn-outline btn-sm" onclick="exportCSV('poscosecha')">⬇ Exportar</button>
+                <button class="btn btn-outline btn-sm" onclick="importarIteranza2026()" style="border-color:#e07b2a;color:#e07b2a" title="Importar informes Iteranza Ene–Mar 2026">📥 Importar 2026</button>
+                <button class="btn btn-primary" onclick="openIteranza()" style="background:#2196f3">＋ Nuevo Informe</button>
+            </div>
+        </div>
+        <p style="font-size:.82rem;color:var(--muted);margin:-6px 0 14px">
+            Resultados de planta empacadora (Iteranza / Durexporta): kg recibidos, clasificación en export / local / rechazo y liquidación. Aquí está el <strong>ingreso real</strong> de la finca.
+        </p>
+        <div class="card">
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Liquidación</th>
+                            <th>Período</th>
+                            <th>Kg Recibidos</th>
+                            <th>Export</th>
+                            <th>Local</th>
+                            <th>Rechazo</th>
+                            <th>%Export</th>
+                            <th>$ / Kg</th>
+                            <th>Facturado</th>
+                            <th>Notas</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-poscosecha"></tbody>
                 </table>
             </div>
         </div>
@@ -1596,19 +1638,21 @@
         <div id="rent-stats" class="stats-grid" style="margin-bottom:22px"></div>
         <!-- Tabla + tarjetas por parcela -->
         <div class="card" style="margin-bottom:20px">
-            <div class="card-header">Detalle por Lote</div>
+            <div class="card-header">Detalle de costos y producción por Lote</div>
+            <p style="font-size:.8rem;color:var(--muted);margin:0 16px 4px">
+                ℹ️ El ingreso de exportación se liquida a nivel finca (pos-cosecha), no por parcela. Aquí ves <strong>costos</strong> y <strong>producción (kg)</strong> de cada lote. El margen de la finca está en el resumen de arriba.
+            </p>
             <div class="table-wrap">
                 <table id="rent-tabla">
                     <thead>
                         <tr>
                             <th>Parcela</th>
                             <th>Ha</th>
-                            <th style="text-align:right">Ingresos</th>
                             <th style="text-align:right">Gastos directos</th>
                             <th style="text-align:right">Costo labores</th>
                             <th style="text-align:right">Nómina fijos</th>
-                            <th style="text-align:right">Margen bruto</th>
-                            <th style="text-align:right">$/ha</th>
+                            <th style="text-align:right">Costo total</th>
+                            <th style="text-align:right">Costo/ha</th>
                             <th style="text-align:right">kg cosechados</th>
                             <th style="text-align:right">kg/ha</th>
                             <th style="text-align:right">kg/árbol</th>
@@ -2594,7 +2638,7 @@ firebase.initializeApp(firebaseConfig);
 const _fdb = firebase.firestore();
 
 // ─── COLECCIONES ────────────────────────────────────────────
-const COLECCIONES = ['parcelas','cosechas','gastos','labores','insumos',
+const COLECCIONES = ['parcelas','cosechas','poscosecha','gastos','labores','insumos',
                      'trabajadores','jornadas','muestreos','observaciones',
                      'tratamientos','facturas_scan'];
 
@@ -2876,6 +2920,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
         document.getElementById('page-' + page).classList.add('active');
         el.classList.add('active');
         render();
+        if (page === 'poscosecha')    renderPoscosecha();
         if (page === 'graficas')      renderGraficas();
         if (page === 'rentabilidad')  renderRentabilidad();
         if (page === 'facturas')      { loadApiKey(); renderFacturasHistory(); }
@@ -3550,6 +3595,7 @@ function render() {
     renderParcelas();
     renderLabores();
     renderCosechas();
+    renderPoscosecha();
     renderGastos();
     renderInsumos();
     const graficasPage = document.getElementById('page-graficas');
@@ -3557,15 +3603,17 @@ function render() {
 }
 
 function renderDashboard() {
-    const parcelas = DB.get('parcelas');
-    const cosechas = DB.get('cosechas');
-    const labores  = DB.get('labores');
-    const gastos   = DB.get('gastos');
+    const parcelas   = DB.get('parcelas');
+    const cosechas   = DB.get('cosechas');
+    const poscosecha = DB.get('poscosecha');
+    const labores    = DB.get('labores');
+    const gastos     = DB.get('gastos');
 
     const totalHa       = parcelas.reduce((s, p) => s + (p.ha || 0), 0);
     const totalArboles  = parcelas.reduce((s, p) => s + (p.arboles || 0), 0);
-    const totalKg       = cosechas.reduce((s, c) => s + (c.kg || 0), 0);
-    const totalIngresos = cosechas.reduce((s, c) => s + (c.kg || 0) * (c.precio || 0), 0);
+    const totalKg       = cosechas.reduce((s, c) => s + (c.kg || 0), 0);                    // producción de campo
+    const totalKgPlanta = poscosecha.reduce((s, p) => s + (parseFloat(p.kgRecibidos)||0), 0); // recibido en planta
+    const totalIngresos = poscosecha.reduce((s, p) => s + (parseFloat(p.valorFacturado)||0), 0); // ingreso real (liquidación)
     const totalGastos   = gastos.reduce((s, g) => s + (g.monto || 0), 0);
     const totalLabCosto = labores.reduce((s, l) => s + (l.costo || 0), 0);
     const pendientes    = labores.filter(l => l.estado === 'Pendiente').length;
@@ -3603,14 +3651,14 @@ function renderDashboard() {
             <div class="s-sub">registrados</div>
         </div>
         <div class="stat-card highlight">
-            <div class="s-label">Total Cosechado</div>
+            <div class="s-label">Cosecha de Campo</div>
             <div class="s-value">${fmt.num(Math.round(totalKg))}<span style="font-size:1rem;font-weight:400"> kg</span></div>
-            <div class="s-sub">${cosechas.length} cosecha${cosechas.length !== 1 ? 's' : ''}</div>
+            <div class="s-sub">${fmt.num(Math.round(totalKgPlanta))} kg recibidos en planta</div>
         </div>
         <div class="stat-card">
             <div class="s-label">Ingresos Totales</div>
             <div class="s-value" style="font-size:1.4rem">${fmt.money(totalIngresos)}</div>
-            <div class="s-sub">por ventas</div>
+            <div class="s-sub">liquidación planta</div>
         </div>
         <div class="stat-card danger">
             <div class="s-label">Gastos Totales</div>
@@ -3737,6 +3785,103 @@ function renderCosechas() {
     </tr>`;
 }
 
+// ── POS-COSECHA (planta / empaque) ──────────────────────────
+function renderPoscosecha() {
+    const data  = DB.get('poscosecha');
+    const tbody = document.getElementById('tbody-poscosecha');
+    if (!tbody) return;
+    if (!data.length) {
+        tbody.innerHTML = emptyRow(11, '📦', 'No hay informes de pos-cosecha. Usa "＋ Nuevo Informe" o "📥 Importar 2026".');
+        return;
+    }
+    // Ordenar por fecha de liquidación descendente
+    const ordenado = [...data].sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''));
+
+    const tKgRec  = ordenado.reduce((s,p) => s + (parseFloat(p.kgRecibidos)||0), 0);
+    const tExport = ordenado.reduce((s,p) => s + (parseFloat(p.kgExport)||0), 0);
+    const tLocal  = ordenado.reduce((s,p) => s + (parseFloat(p.kgLocal)||0), 0);
+    const tRech   = ordenado.reduce((s,p) => s + (parseFloat(p.kgRechazo)||0), 0);
+    const tValor  = ordenado.reduce((s,p) => s + (parseFloat(p.valorFacturado)||0), 0);
+    const pctExTot = tKgRec > 0 ? Math.round(tExport / tKgRec * 100) : 0;
+
+    tbody.innerHTML = ordenado.map(p => {
+        const pctEx = p.pctExport != null ? p.pctExport
+                    : ((parseFloat(p.kgRecibidos)||0) > 0 ? Math.round((parseFloat(p.kgExport)||0) / p.kgRecibidos * 100) : null);
+        const precio = parseFloat(p.precioEfectivo) ||
+                       ((parseFloat(p.kgRecibidos)||0) > 0 ? (parseFloat(p.valorFacturado)||0) / p.kgRecibidos : 0);
+        return `<tr>
+            <td style="white-space:nowrap">${fmt.date(p.fecha)}</td>
+            <td style="white-space:nowrap">${p.periodo || '—'}</td>
+            <td><strong>${fmt.kg(p.kgRecibidos)}</strong></td>
+            <td>${p.kgExport ? fmt.kg(p.kgExport) : '—'}</td>
+            <td>${p.kgLocal ? fmt.kg(p.kgLocal) : '—'}</td>
+            <td>${p.kgRechazo ? fmt.kg(p.kgRechazo) : '—'}</td>
+            <td>${pctEx != null ? `<span class="badge ${pctEx>=60?'badge-green':'badge-blue'}">${pctEx}%</span>` : '—'}</td>
+            <td>$${precio.toLocaleString('es', {minimumFractionDigits:2, maximumFractionDigits:4})}</td>
+            <td><strong style="color:var(--primary)">${fmt.money(p.valorFacturado)}</strong></td>
+            <td style="max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${(p.idsLotes||'')+(p.notas?' · '+p.notas:'')}">${p.idsLotes ? 'Lotes: '+p.idsLotes : (p.notas||'—')}</td>
+            <td><button class="btn btn-danger-ghost" onclick="del('poscosecha', ${p.id})">✕</button></td>
+        </tr>`;
+    }).join('') + `<tr style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
+        <td colspan="2" style="padding:10px 12px">TOTAL</td>
+        <td>${fmt.kg(tKgRec)}</td>
+        <td>${fmt.kg(tExport)}</td>
+        <td>${fmt.kg(tLocal)}</td>
+        <td>${fmt.kg(tRech)}</td>
+        <td>${pctExTot}%</td>
+        <td>—</td>
+        <td style="color:var(--primary)">${fmt.money(tValor)}</td>
+        <td colspan="2"></td>
+    </tr>`;
+}
+
+// ── MIGRACIÓN: mover registros Iteranza viejos de cosechas → poscosecha ──
+// Se ejecuta una sola vez. Los registros antiguos guardaban todo en `cosechas`
+// con _tag 'iteranza_*'. Los convertimos al nuevo esquema estructurado.
+function migrarIteranzaAPoscosecha() {
+    if (localStorage.getItem('hda_migr_poscosecha') === 'done') return;
+    const cosechas = DB.get('cosechas');
+    const viejos   = cosechas.filter(c => typeof c._tag === 'string' && c._tag.startsWith('iteranza_'));
+    if (!viejos.length) { localStorage.setItem('hda_migr_poscosecha', 'done'); return; }
+
+    const yaEnPos = new Set(DB.get('poscosecha').map(p => p._tag).filter(Boolean));
+
+    viejos.forEach(c => {
+        if (yaEnPos.has(c._tag)) { DB.remove('cosechas', c.id); return; }
+        // Parsear datos que estaban embebidos en notas: "Export: 7,384 kg (71%) · Local INTDEX: 1,116 kg · Rechazo: 1,990 kg · Lotes: ..."
+        const notas = c.notas || '';
+        const num = re => { const m = notas.match(re); return m ? parseFloat(m[1].replace(/[.,](?=\d{3}\b)/g,'')) : 0; };
+        const kgExport = num(/Export[^\d]*([\d.,]+)\s*kg/i);
+        const kgLocal  = num(/Local[^\d]*([\d.,]+)\s*kg/i);
+        const kgRech   = num(/Rechazo[^\d]*([\d.,]+)\s*kg/i);
+        const pctM     = notas.match(/\((\d+)%\)/);
+        const idsM     = notas.match(/Lotes?:\s*([\d,\s]+)/i);
+        const semM     = notas.match(/[Ss]em\s*([\d-]+)/);
+        const anio     = (c.fecha||'').slice(0,4);
+        const mes      = (c.fecha||'').slice(5,7);
+
+        DB.add('poscosecha', {
+            _tag:      c._tag,
+            fecha:     c.fecha,
+            periodo:   getMesNombre(mes) + ' ' + anio + (semM ? ' · sem ' + semM[1] : ''),
+            mes, anio, semanas: semM ? semM[1] : '',
+            lotes:     0,
+            kgRecibidos: parseFloat(c.kg) || 0,
+            kgExport, kgLocal, kgRechazo: kgRech,
+            valorFacturado: (parseFloat(c.kg)||0) * (parseFloat(c.precio)||0),
+            precioEfectivo: parseFloat(c.precio) || 0,
+            pctExport: pctM ? parseInt(pctM[1]) : null,
+            idsLotes:  idsM ? idsM[1].trim() : '',
+            comprador: c.comprador || 'INTERANZA / INTDEX',
+            notas:     ''
+        });
+        DB.remove('cosechas', c.id);
+    });
+
+    localStorage.setItem('hda_migr_poscosecha', 'done');
+    console.log(`[migración] ${viejos.length} registro(s) Iteranza movidos a poscosecha.`);
+}
+
 function renderGastos() {
     const data  = DB.get('gastos');
     const tbody = document.getElementById('tbody-gastos');
@@ -3826,15 +3971,17 @@ const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov'
 const COLORS = ['#2d6a4f','#40916c','#52b788','#74c69d','#95d5b2','#b7e4c7','#d8f3dc','#1b4332','#081c15','#e07b2a','#2196f3','#9c27b0'];
 
 function renderGraficas() {
-    const cosechas = DB.get('cosechas');
-    const gastos   = DB.get('gastos');
-    const labores  = DB.get('labores');
+    const cosechas   = DB.get('cosechas');
+    const poscosecha = DB.get('poscosecha');
+    const gastos     = DB.get('gastos');
+    const labores    = DB.get('labores');
 
     // Populate year selector
     const anioSel = document.getElementById('chart-anio');
     if (!anioSel) return;
     const allYears = [...new Set([
         ...cosechas.map(c => c.fecha?.slice(0,4)),
+        ...poscosecha.map(p => p.fecha?.slice(0,4)),
         ...gastos.map(g => g.fecha?.slice(0,4))
     ].filter(Boolean))].sort().reverse();
     const currentYear = new Date().getFullYear().toString();
@@ -3845,16 +3992,17 @@ function renderGraficas() {
     }
 
     const cosAño  = cosechas.filter(c => c.fecha?.startsWith(selectedYear));
+    const posAño  = poscosecha.filter(p => (p.fecha||'').startsWith(selectedYear));
     const gasAño  = gastos.filter(g => g.fecha?.startsWith(selectedYear));
     const labAño  = labores.filter(l => l.fecha?.startsWith(selectedYear));
 
-    // kg por mes
+    // kg por mes — producción de campo
     const kgMes = Array(12).fill(0);
     cosAño.forEach(c => { const m = parseInt(c.fecha?.slice(5,7)) - 1; if (m >= 0) kgMes[m] += (c.kg || 0); });
 
-    // ingresos por mes
+    // ingresos por mes — liquidación de pos-cosecha (ingreso real)
     const ingMes = Array(12).fill(0);
-    cosAño.forEach(c => { const m = parseInt(c.fecha?.slice(5,7)) - 1; if (m >= 0) ingMes[m] += (c.kg||0)*(c.precio||0); });
+    posAño.forEach(p => { const m = parseInt((p.fecha||'').slice(5,7)) - 1; if (m >= 0) ingMes[m] += (parseFloat(p.valorFacturado)||0); });
 
     // gastos por mes
     const gasMes = Array(12).fill(0);
@@ -6013,40 +6161,41 @@ function saveIteranza() {
     if (!valor    || valor<=0)    return alert('El Valor Facturado es obligatorio y debe ser > 0.');
 
     const tag = `iteranza_${anio}_${mes}`;
-    const existentes = DB.get('cosechas');
+    const existentes = DB.get('poscosecha');
     if (existentes.some(c => c._tag === tag)) {
         const mesN = getMesNombre(mes);
-        if (!confirm(`⚠️ Ya existe un registro Iteranza para ${mesN} ${anio}.\n¿Deseas agregar otro registro para el mismo mes de todas formas?`)) return;
+        if (!confirm(`⚠️ Ya existe un informe de pos-cosecha para ${mesN} ${anio}.\n¿Deseas agregar otro registro para el mismo mes de todas formas?`)) return;
     }
 
     const precio  = valor / kgPlanta;
     const pctEx   = kgExport > 0 ? Math.round(kgExport / kgPlanta * 100) : null;
+    const mesN    = getMesNombre(mes);
 
-    // Build notas auto from fields
-    const parts = [];
-    if (semanas)  parts.push(`Sem ${semanas}`);
-    if (lotes)    parts.push(`${lotes} lotes`);
-    if (kgExport) parts.push(`Export: ${kgExport.toLocaleString('es')} kg${pctEx !== null ? ` (${pctEx}%)` : ''}`);
-    if (kgLocal)  parts.push(`Local: ${kgLocal.toLocaleString('es')} kg`);
-    if (kgRech)   parts.push(`Rechazo: ${kgRech.toLocaleString('es')} kg`);
-    if (idsLotes) parts.push(`Lotes: ${idsLotes}`);
-    if (notasEx)  parts.push(notasEx);
+    // Período legible (ej: "Enero 2026 · sem 2-4")
+    const periodo = mesN + ' ' + anio + (semanas ? ' · sem ' + semanas : '');
 
-    DB.add('cosechas', {
+    DB.add('poscosecha', {
         _tag:      tag,
-        fecha,
-        parcela:   'Toda la finca',
-        kg:        kgPlanta,
-        precio:    precio,
+        fecha,                              // fecha de liquidación
+        periodo,
+        mes, anio,
+        semanas:   semanas || '',
+        lotes:     parseInt(lotes) || 0,
+        kgRecibidos: kgPlanta,
+        kgExport,
+        kgLocal,
+        kgRechazo: kgRech,
+        valorFacturado: valor,
+        precioEfectivo: precio,
+        pctExport: pctEx,
+        idsLotes:  idsLotes || '',
         comprador: 'INTERANZA / INTDEX',
-        calidad:   'Exportación',
-        notas:     parts.join(' · ')
+        notas:     notasEx || ''
     });
 
     closeModal('modal-iteranza');
-    renderCosechas();
+    renderPoscosecha();
 
-    const mesN = getMesNombre(mes);
     alert(`✅ Informe ${mesN} ${anio} guardado.\n\n📦 ${kgPlanta.toLocaleString('es')} kg recibidos\n💲 $${precio.toFixed(4)}/kg precio efectivo\n💰 ${fmt.money(valor)} facturado`);
 }
 
@@ -6062,57 +6211,56 @@ function importarIteranza2026() {
         {
             _tag:      'iteranza_2026_enero',
             fecha:     '2026-01-31',
-            parcela:   'Toda la finca',
-            kg:        10409.09,
-            precio:    0.815865,
-            comprador: 'INTERANZA / INTDEX',
-            calidad:   'Exportación',
-            notas:     'Iteranza sem 2-4 · 6 lotes · Export: 7,384 kg (71%) · Local INTDEX: 1,116 kg · Rechazo: 1,990 kg · Lotes: 14454, 14467, 14510, 14533, 14501, 14554'
+            periodo:   'Enero 2026 · sem 2-4',
+            mes: '01', anio: '2026', semanas: '2-4', lotes: 6,
+            kgRecibidos: 10409.09, kgExport: 7384, kgLocal: 1116, kgRechazo: 1990,
+            valorFacturado: 8492.49, precioEfectivo: 0.815865, pctExport: 71,
+            idsLotes:  '14454, 14467, 14510, 14533, 14501, 14554',
+            comprador: 'INTERANZA / INTDEX', notas: ''
         },
         {
             _tag:      'iteranza_2026_febrero',
             fecha:     '2026-02-28',
-            parcela:   'Toda la finca',
-            kg:        10649.00,
-            precio:    0.750079,
-            comprador: 'INTERANZA / INTDEX',
-            calidad:   'Exportación',
-            notas:     'Iteranza sem 6-9 · 8 lotes · Export: 6,913 kg (65%) · Local INTDEX: 1,319 kg · Rechazo: 2,361 kg · Lotes: 14658, 14688, 14724, 14749, 14752, 14772, 14842, 14870'
+            periodo:   'Febrero 2026 · sem 6-9',
+            mes: '02', anio: '2026', semanas: '6-9', lotes: 8,
+            kgRecibidos: 10649.00, kgExport: 6913, kgLocal: 1319, kgRechazo: 2361,
+            valorFacturado: 7987.13, precioEfectivo: 0.750079, pctExport: 65,
+            idsLotes:  '14658, 14688, 14724, 14749, 14752, 14772, 14842, 14870',
+            comprador: 'INTERANZA / INTDEX', notas: ''
         },
         {
             _tag:      'iteranza_2026_marzo',
             fecha:     '2026-03-12',
-            parcela:   'Toda la finca',
-            kg:        1705.45,
-            precio:    0.673401,
-            comprador: 'INTERANZA / INTDEX',
-            calidad:   'Exportación',
-            notas:     'Iteranza sem 10-11 (parcial) · 3 lotes · Export: 721 kg (42%) · Local INTDEX: 494 kg · Rechazo: 490 kg · Lotes: 14951, 14998, 15026'
+            periodo:   'Marzo 2026 · sem 10-11 (parcial)',
+            mes: '03', anio: '2026', semanas: '10-11', lotes: 3,
+            kgRecibidos: 1705.45, kgExport: 721, kgLocal: 494, kgRechazo: 490,
+            valorFacturado: 1148.49, precioEfectivo: 0.673401, pctExport: 42,
+            idsLotes:  '14951, 14998, 15026',
+            comprador: 'INTERANZA / INTDEX', notas: ''
         }
     ];
 
-    const existentes = DB.get('cosechas');
+    const existentes = DB.get('poscosecha');
     const tagsExist  = new Set(existentes.map(c => c._tag).filter(Boolean));
     const nuevas     = entradas.filter(e => !tagsExist.has(e._tag));
 
     if (!nuevas.length) {
-        alert('✅ Los datos de Iteranza 2026 (Enero–Marzo) ya están registrados.\nNo se agregaron duplicados.');
+        alert('✅ Los datos de pos-cosecha 2026 (Enero–Marzo) ya están registrados.\nNo se agregaron duplicados.');
         return;
     }
 
-    const resumen = nuevas.map(e => {
-        const mes = new Date(e.fecha).toLocaleString('es', { month: 'long', year: 'numeric' });
-        return `• ${mes}: ${e.kg.toLocaleString('es')} kg → ${fmt.money(e.kg * e.precio)}`;
-    }).join('\n');
+    const resumen = nuevas.map(e =>
+        `• ${e.periodo.split(' · ')[0]}: ${e.kgRecibidos.toLocaleString('es')} kg → ${fmt.money(e.valorFacturado)}`
+    ).join('\n');
 
     if (!confirm(
-        `📥 Importar datos Iteranza 2026\n\nSe agregarán ${nuevas.length} entrada(s):\n${resumen}\n\n` +
-        `Fuente: Informes INTDEX/INTERANZA (consolidado mensual)\nParcela: "Toda la finca"\n\n¿Continuar?`
+        `📥 Importar pos-cosecha 2026\n\nSe agregarán ${nuevas.length} informe(s):\n${resumen}\n\n` +
+        `Fuente: Informes INTDEX/INTERANZA (consolidado mensual)\n\n¿Continuar?`
     )) return;
 
-    nuevas.forEach(e => DB.add('cosechas', e));
-    renderCosechas();
-    alert(`✅ ${nuevas.length} entrada(s) importadas correctamente.\n\nTotal importado: ${fmt.money(nuevas.reduce((s,e) => s + e.kg * e.precio, 0))}\nPuedes verlas en la tabla de Cosechas.`);
+    nuevas.forEach(e => DB.add('poscosecha', e));
+    renderPoscosecha();
+    alert(`✅ ${nuevas.length} informe(s) importados correctamente.\n\nTotal facturado: ${fmt.money(nuevas.reduce((s,e) => s + e.valorFacturado, 0))}\nPuedes verlos en la tabla de Pos-cosecha.`);
 }
 
 function exportarBackup() {
@@ -6209,6 +6357,7 @@ async function importarBackup(e) {
 function renderRentabilidad() {
     const parcelas     = DB.get('parcelas');
     const cosechas     = DB.get('cosechas');
+    const poscosecha   = DB.get('poscosecha');
     const gastos       = DB.get('gastos');
     const labores      = DB.get('labores');
     const jornadas     = DB.get('jornadas');
@@ -6218,6 +6367,7 @@ function renderRentabilidad() {
     const anioSel = document.getElementById('rent-anio');
     const anios = [...new Set([
         ...cosechas.map(c => c.fecha?.slice(0,4)),
+        ...poscosecha.map(p => p.fecha?.slice(0,4)),
         ...gastos.map(g => g.fecha?.slice(0,4)),
         ...labores.map(l => l.fecha?.slice(0,4))
     ])].filter(Boolean).sort().reverse();
@@ -6236,9 +6386,14 @@ function renderRentabilidad() {
     const filtrar = arr => anioFiltro === 'Todos' ? arr : arr.filter(x => x.fecha?.startsWith(anioFiltro));
 
     const cosFiltr = filtrar(cosechas);
+    const posFiltr = filtrar(poscosecha);
     const gasFiltr = filtrar(gastos);
     const labFiltr = filtrar(labores);
     const jorFiltr = filtrar(jornadas);
+
+    // Ingreso real de la finca = liquidación de pos-cosecha (no atribuible por parcela)
+    const ingresoFinca = posFiltr.reduce((s, p) => s + (parseFloat(p.valorFacturado)||0), 0);
+    const kgPlantaFinca = posFiltr.reduce((s, p) => s + (parseFloat(p.kgRecibidos)||0), 0);
 
     // ── Costo nómina fija distribuida por ha sembradas ────────
     // Solo parcelas activas con aguacate sembrado (excluye Inactivo)
@@ -6250,11 +6405,8 @@ function renderRentabilidad() {
         s + calcularCostoEmpleador(t.salario, t.fechaIngreso).total, 0);
     const costoAnualFijo = costoMesFijo * 12;
 
-    // ── Calcular por parcela ────────────────────────────────
+    // ── Calcular por parcela (costos + producción; el ingreso es a nivel finca) ──
     const datos = parcelas.map(p => {
-        const ingresos  = cosFiltr
-            .filter(c => c.parcela === p.nombre)
-            .reduce((s, c) => s + (parseFloat(c.kg)||0) * (parseFloat(c.precio)||0), 0);
         const kgTotal   = cosFiltr
             .filter(c => c.parcela === p.nombre)
             .reduce((s, c) => s + (parseFloat(c.kg)||0), 0);
@@ -6283,34 +6435,34 @@ function renderRentabilidad() {
 
         const haCalc    = ha || 1;
         const arboles   = parseInt(p.arboles) || 1;
-        const margen    = ingresos - gastosDir - costLab - costJornadas - costNomina;
+        const costoTotal = gastosDir + costLab + costJornadas + costNomina;
 
         return {
             id: p.id, nombre: p.nombre,
             ha, arboles, variedad: p.variedad, estado: p.estado,
-            ingresos, gastosDir, costLab: costLab + costJornadas, costNomina,
-            margen, margenPorHa: margen / haCalc,
-            kgTotal, kgPorHa: kgTotal / haCalc, kgPorArbol: kgTotal / arboles,
-            rentPct: ingresos > 0 ? (margen / ingresos * 100) : null
+            gastosDir, costLab: costLab + costJornadas, costNomina,
+            costoTotal, costoPorHa: costoTotal / haCalc,
+            kgTotal, kgPorHa: kgTotal / haCalc, kgPorArbol: kgTotal / arboles
         };
     });
 
-    // ── Stats globales ──────────────────────────────────────
+    // ── Stats globales (P&L de la finca) ────────────────────
     const tot = datos.reduce((s, d) => ({
-        ingresos:   s.ingresos   + d.ingresos,
         gastosDir:  s.gastosDir  + d.gastosDir,
         costLab:    s.costLab    + d.costLab,
         costNomina: s.costNomina + d.costNomina,
-        margen:     s.margen     + d.margen,
+        costoTotal: s.costoTotal + d.costoTotal,
         kgTotal:    s.kgTotal    + d.kgTotal
-    }), { ingresos:0, gastosDir:0, costLab:0, costNomina:0, margen:0, kgTotal:0 });
+    }), { gastosDir:0, costLab:0, costNomina:0, costoTotal:0, kgTotal:0 });
+
+    const margenFinca = ingresoFinca - tot.costoTotal;
 
     const statCards = [
-        { label:'Ingresos totales',   value:fmt.money(tot.ingresos),  sub:'De cosechas',      cls: tot.ingresos>0?'highlight':'' },
-        { label:'Gastos variables',   value:fmt.money(tot.gastosDir+tot.costLab), sub:'Insumos + labores + jornales', cls:'warn' },
-        { label:'Nómina fija (año)',  value:fmt.money(tot.costNomina), sub:`${trabajFijos.length} trabajador${trabajFijos.length!==1?'es':''} · ${fmt.money(costoMesFijo)}/mes`, cls:'warn' },
-        { label:'Margen bruto',       value:fmt.money(tot.margen),    sub: tot.ingresos>0 ? (tot.margen/tot.ingresos*100).toFixed(1)+'% de rentabilidad' : '—', cls: tot.margen>=0?'highlight':'danger' },
-        { label:'Kg cosechados',      value:fmt.num(tot.kgTotal)+'kg', sub: anioFiltro==='Todos'?'Total histórico':`En ${anioFiltro}`, cls:'' },
+        { label:'Ingreso pos-cosecha', value:fmt.money(ingresoFinca), sub:'Liquidación planta (finca)', cls: ingresoFinca>0?'highlight':'' },
+        { label:'Costos totales',      value:fmt.money(tot.costoTotal), sub:'Gastos + labores + nómina', cls:'warn' },
+        { label:'Margen finca',        value:fmt.money(margenFinca),  sub: ingresoFinca>0 ? (margenFinca/ingresoFinca*100).toFixed(1)+'% de rentabilidad' : '—', cls: margenFinca>=0?'highlight':'danger' },
+        { label:'Kg recibidos planta', value:fmt.num(Math.round(kgPlantaFinca))+' kg', sub: anioFiltro==='Todos'?'Total histórico':`En ${anioFiltro}`, cls:'' },
+        { label:'Kg cosecha campo',    value:fmt.num(Math.round(tot.kgTotal))+' kg', sub:'Producción registrada', cls:'' },
     ];
     document.getElementById('rent-stats').innerHTML = statCards.map(s => `
         <div class="stat-card ${s.cls}">
@@ -6321,34 +6473,31 @@ function renderRentabilidad() {
 
     // ── Tabla ───────────────────────────────────────────────
     const tbody = document.getElementById('rent-tbody');
-    const sorted = [...datos].sort((a,b) => b.margen - a.margen);
+    const sorted = [...datos].sort((a,b) => b.costoTotal - a.costoTotal);
     tbody.innerHTML = sorted.map(d => {
-        const margenCol = d.margen >= 0 ? '#2d6a4f' : '#d32f2f';
-        const haData    = d.ingresos === 0 && d.gastosDir === 0 && d.costLab === 0 && d.costNomina === 0;
+        const haData = d.costoTotal === 0 && d.kgTotal === 0;
         return `<tr ${haData ? 'style="opacity:.45"' : ''}>
             <td><strong>${d.nombre}</strong><br><small style="color:#888">${d.variedad||'—'} · ${d.estado||''}</small></td>
             <td style="text-align:right">${d.ha}</td>
-            <td style="text-align:right;color:#2d6a4f">${fmt.money(d.ingresos)}</td>
             <td style="text-align:right;color:#c62828">${fmt.money(d.gastosDir)}</td>
             <td style="text-align:right;color:#e07b2a">${fmt.money(d.costLab)}</td>
             <td style="text-align:right;color:#c62828">${d.costNomina > 0 ? fmt.money(d.costNomina) : '<span style="color:#ddd">—</span>'}</td>
-            <td style="text-align:right;font-weight:700;color:${margenCol}">${fmt.money(d.margen)}</td>
-            <td style="text-align:right">${fmt.money(d.margenPorHa)}</td>
+            <td style="text-align:right;font-weight:700">${fmt.money(d.costoTotal)}</td>
+            <td style="text-align:right">${fmt.money(d.costoPorHa)}</td>
             <td style="text-align:right">${fmt.num(d.kgTotal)} kg</td>
             <td style="text-align:right">${fmt.num(d.kgPorHa)} kg</td>
             <td style="text-align:right">${d.kgPorArbol.toFixed(1)} kg</td>
         </tr>`;
-    }).join('') || `<tr><td colspan="11" style="text-align:center;color:#aaa;padding:20px">Sin datos para el período seleccionado</td></tr>`;
+    }).join('') || `<tr><td colspan="10" style="text-align:center;color:#aaa;padding:20px">Sin datos para el período seleccionado</td></tr>`;
 
     // ── Tarjetas visuales ───────────────────────────────────
     const cards = document.getElementById('rent-cards');
+    const maxCosto = Math.max(...datos.map(d => d.costoTotal), 1);
     cards.innerHTML = sorted.map(d => {
-        const haData = d.ingresos === 0 && d.gastosDir === 0 && d.costLab === 0 && d.costNomina === 0;
+        const haData = d.costoTotal === 0 && d.kgTotal === 0;
         if (haData) return '';
-        const margenPct = d.ingresos > 0 ? (d.margen / d.ingresos * 100) : 0;
-        const barColor  = d.margen >= 0 ? '#52b788' : '#d32f2f';
-        const barW      = Math.min(100, Math.abs(margenPct));
-        const totalGastos = d.gastosDir + d.costLab + d.costNomina;
+        const barColor  = '#e07b2a';
+        const barW      = Math.min(100, d.costoTotal / maxCosto * 100);
         return `<div class="card" style="padding:16px">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
                 <div>
@@ -6356,20 +6505,16 @@ function renderRentabilidad() {
                     <div style="font-size:12px;color:#888">${d.variedad||'—'} · ${d.ha} ha · ${d.arboles} árboles</div>
                 </div>
                 <div style="text-align:right">
-                    <div style="font-size:20px;font-weight:800;color:${d.margen>=0?'#2d6a4f':'#d32f2f'}">
-                        ${fmt.money(d.margen)}
+                    <div style="font-size:20px;font-weight:800;color:#c62828">
+                        ${fmt.money(d.costoTotal)}
                     </div>
-                    <div style="font-size:11px;color:#888">margen bruto · ${fmt.money(d.margenPorHa)}/ha</div>
+                    <div style="font-size:11px;color:#888">costo total · ${fmt.money(d.costoPorHa)}/ha</div>
                 </div>
             </div>
             <div style="background:#f0f0f0;border-radius:4px;height:6px;margin-bottom:10px;overflow:hidden">
                 <div style="background:${barColor};height:100%;width:${barW}%;transition:width .4s"></div>
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:5px;font-size:12px">
-                <div style="background:#f9f9f9;border-radius:6px;padding:6px 8px;text-align:center">
-                    <div style="color:#888;font-size:10px">INGRESOS</div>
-                    <div style="font-weight:600;color:#2d6a4f">${fmt.money(d.ingresos)}</div>
-                </div>
                 <div style="background:#f9f9f9;border-radius:6px;padding:6px 8px;text-align:center">
                     <div style="color:#888;font-size:10px">GASTOS+LAB</div>
                     <div style="font-weight:600;color:#c62828">${fmt.money(d.gastosDir+d.costLab)}</div>
@@ -6379,13 +6524,17 @@ function renderRentabilidad() {
                     <div style="font-weight:600;color:#c62828">${fmt.money(d.costNomina)}</div>
                 </div>
                 <div style="background:#f9f9f9;border-radius:6px;padding:6px 8px;text-align:center">
+                    <div style="color:#888;font-size:10px">kg CAMPO</div>
+                    <div style="font-weight:600">${fmt.num(Math.round(d.kgTotal))}</div>
+                </div>
+                <div style="background:#f9f9f9;border-radius:6px;padding:6px 8px;text-align:center">
                     <div style="color:#888;font-size:10px">kg/ha</div>
                     <div style="font-weight:600">${fmt.num(d.kgPorHa)}</div>
                 </div>
             </div>
-            ${d.rentPct != null ? `<div style="margin-top:8px;font-size:11px;color:#888;text-align:right">
-                Rentabilidad: <strong style="color:${d.rentPct>=0?'#2d6a4f':'#d32f2f'}">${d.rentPct.toFixed(1)}%</strong>
-            </div>` : ''}
+            <div style="margin-top:8px;font-size:11px;color:#888;text-align:right">
+                ${d.kgTotal > 0 ? `Costo por kg: <strong>${fmt.money(d.kgTotal > 0 ? d.costoTotal / d.kgTotal : 0)}</strong>` : 'Sin producción de campo registrada'}
+            </div>
         </div>`;
     }).join('');
 }
@@ -7219,7 +7368,7 @@ function entrarConRol() {
     aplicarRol(_rolActual);
     loadApiKey();
     renderFacturasHistory();
-    initFirestore().then(() => render());
+    initFirestore().then(() => { migrarIteranzaAPoscosecha(); render(); });
 }
 
 function aplicarRol(rol) {
@@ -7882,6 +8031,7 @@ function _aiConstruirContexto() {
 
     const parcelas     = DB.get('parcelas');
     const cosechas     = DB.get('cosechas').filter(c => (c.fechaISO||c.fecha||'') >= hace90).slice(0, 20);
+    const poscosecha   = DB.get('poscosecha').filter(p => (p.fecha||'') >= hace90).slice(0, 15);
     const gastos       = DB.get('gastos').filter(g => (g.fecha||'') >= hace90).slice(0, 20);
     const labores      = DB.get('labores').filter(l => (l.fecha||'') >= hace90).slice(0, 20);
     const insumos      = DB.get('insumos').slice(0, 25);
@@ -7892,21 +8042,23 @@ function _aiConstruirContexto() {
     const muestreos    = DB.get('muestreos').slice(0, 5);
 
     // Totales financieros
-    const totalCosechaKg      = cosechas.reduce((s,c) => s + (parseFloat(c.kg)||0), 0);
-    const totalIngresoCosecha = cosechas.reduce((s,c) => s + (parseFloat(c.kg)||0)*(parseFloat(c.precio)||0), 0);
+    const totalCosechaKg      = cosechas.reduce((s,c) => s + (parseFloat(c.kg)||0), 0);        // producción de campo
+    const totalKgPlanta       = poscosecha.reduce((s,p) => s + (parseFloat(p.kgRecibidos)||0), 0);
+    const totalIngresoReal    = poscosecha.reduce((s,p) => s + (parseFloat(p.valorFacturado)||0), 0); // ingreso real (liquidación)
     const totalGastos         = gastos.reduce((s,g) => s + (parseFloat(g.monto)||0), 0);
     const totalJornadas       = jornadas.reduce((s,j) => s + (parseFloat(j.costo)||0), 0);
-    const rentabilidadNeta    = totalIngresoCosecha - totalGastos - totalJornadas;
+    const rentabilidadNeta    = totalIngresoReal - totalGastos - totalJornadas;
 
     let ctx = 'FECHA HOY: ' + hoy + '\n';
     ctx += 'FINCA: Mi Hacienda — Aguacates, La Loma, Carchi, Ecuador\n\n';
 
     // ── RESUMEN FINANCIERO (últimos 90 días) ──
     ctx += 'RESUMEN FINANCIERO (últimos 90 días):\n';
-    ctx += '  Ingresos cosechas: $' + totalIngresoCosecha.toFixed(2) + '\n';
+    ctx += '  Ingreso real (liquidación pos-cosecha): $' + totalIngresoReal.toFixed(2) + '\n';
     ctx += '  Gastos registrados: $' + totalGastos.toFixed(2) + '\n';
     ctx += '  Costo jornadas: $' + totalJornadas.toFixed(2) + '\n';
-    ctx += '  Rentabilidad neta estimada: $' + rentabilidadNeta.toFixed(2) + '\n\n';
+    ctx += '  Rentabilidad neta estimada: $' + rentabilidadNeta.toFixed(2) + '\n';
+    ctx += '  NOTA: "cosecha" = kg bajados del árbol por parcela (producción). "pos-cosecha" = resultado de planta (export/local/rechazo) y el dinero real. Son módulos separados.\n\n';
 
     // ── PARCELAS ──
     const totalArboles = parcelas.reduce((s,p) => s + (parseInt(p.arboles)||0), 0);
@@ -7963,11 +8115,25 @@ function _aiConstruirContexto() {
     }
 
     // ── COSECHAS ──
-    ctx += '\nCOSECHAS últimos 90 días (' + cosechas.length + ' registros) — ' + totalCosechaKg.toFixed(0) + ' kg · $' + totalIngresoCosecha.toFixed(2) + ' ingresos:\n';
+    ctx += '\nCOSECHA DE CAMPO últimos 90 días (' + cosechas.length + ' registros) — ' + totalCosechaKg.toFixed(0) + ' kg bajados del árbol:\n';
+    if (!cosechas.length) ctx += '  (sin registros de cosecha de campo)\n';
     cosechas.slice(0,12).forEach(c => {
-        ctx += '  ' + (c.fechaISO||c.fecha||'') + ': ' + (c.parcela||'') + ' — ' + (c.kg||0) + ' kg a $' + (c.precio||0) + '/kg, calidad ' + (c.calidad||'?');
+        ctx += '  ' + (c.fechaISO||c.fecha||'') + ': ' + (c.parcela||'') + ' — ' + (c.kg||0) + ' kg, calidad ' + (c.calidad||'?');
         if (c.comprador) ctx += ', comprador: ' + c.comprador;
         if (c.notas)     ctx += ' (' + c.notas + ')';
+        ctx += '\n';
+    });
+
+    // ── POS-COSECHA (planta / Iteranza) ──
+    ctx += '\nPOS-COSECHA / PLANTA últimos 90 días (' + poscosecha.length + ' informes) — ' + totalKgPlanta.toFixed(0) + ' kg recibidos · $' + totalIngresoReal.toFixed(2) + ' facturado:\n';
+    if (!poscosecha.length) ctx += '  (sin informes de pos-cosecha)\n';
+    poscosecha.slice(0,12).forEach(p => {
+        const pct = p.pctExport != null ? p.pctExport : ((parseFloat(p.kgRecibidos)||0) > 0 ? Math.round((parseFloat(p.kgExport)||0)/p.kgRecibidos*100) : 0);
+        ctx += '  ' + (p.periodo || p.fecha || '') + ': ' + (parseFloat(p.kgRecibidos)||0).toFixed(0) + ' kg recibidos';
+        ctx += ', export ' + (parseFloat(p.kgExport)||0).toFixed(0) + ' kg (' + pct + '%)';
+        ctx += ', local ' + (parseFloat(p.kgLocal)||0).toFixed(0) + ' kg, rechazo ' + (parseFloat(p.kgRechazo)||0).toFixed(0) + ' kg';
+        ctx += ', $' + (parseFloat(p.valorFacturado)||0).toFixed(2) + ' facturado ($' + (parseFloat(p.precioEfectivo)||0).toFixed(4) + '/kg)';
+        if (p.idsLotes) ctx += ', lotes: ' + p.idsLotes;
         ctx += '\n';
     });
 
