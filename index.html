@@ -938,7 +938,7 @@
             <h2>🧺 Cosecha de Campo</h2>
             <div class="header-actions">
                 <button class="btn btn-outline btn-sm" onclick="exportCSV('cosechas')">⬇ Exportar</button>
-                <button class="btn btn-primary" onclick="openModal('modal-cosecha')">＋ Nueva Cosecha</button>
+                <button class="btn btn-primary" onclick="openCosecha()">＋ Nueva Cosecha</button>
             </div>
         </div>
         <p style="font-size:.82rem;color:var(--muted);margin:-6px 0 14px">
@@ -950,11 +950,11 @@
                     <thead>
                         <tr>
                             <th>Fecha</th>
+                            <th>Lote</th>
                             <th>Parcela</th>
-                            <th>Gavetas</th>
-                            <th>Kg Cosechados</th>
-                            <th>Desecho (kg)</th>
-                            <th>Desecho (gav)</th>
+                            <th>Gavetas (total)</th>
+                            <th>Desecho/abono (gav)</th>
+                            <th>Envío (gav)</th>
                             <th>% Desecho</th>
                             <th>Notas</th>
                             <th></th>
@@ -976,7 +976,7 @@
             </div>
         </div>
         <p style="font-size:.82rem;color:var(--muted);margin:-6px 0 14px">
-            Cada envío de fruta a la planta (guía de remisión) con su <strong>lote de hacienda</strong>. Este código es tu ancla de trazabilidad: cuando Iteranza te lo devuelva en la liquidación, podrás cruzar campo ↔ planta.
+            Cada guía de remisión despacha uno o varios <strong>lotes de cosecha</strong>. Los lotes son tu ancla de trazabilidad: cuando Iteranza te devuelva el código en la liquidación, cruzarás campo ↔ planta.
         </p>
         <div id="entregas-resumen" class="stats-grid" style="margin-bottom:18px"></div>
         <div class="card">
@@ -985,13 +985,12 @@
                     <thead>
                         <tr>
                             <th>Fecha</th>
-                            <th>Lote hacienda</th>
-                            <th>Parcela</th>
+                            <th>Lotes despachados</th>
+                            <th>Parcelas</th>
                             <th>Kg Enviados</th>
                             <th>Guía remisión</th>
                             <th>Transporte</th>
                             <th>Destino</th>
-                            <th>Notas</th>
                             <th></th>
                         </tr>
                     </thead>
@@ -1159,7 +1158,7 @@
         </div>
         <div class="charts-grid">
             <div class="chart-card">
-                <h3>🧺 Kg Cosechados por Mes</h3>
+                <h3>🧺 Gavetas Cosechadas por Mes</h3>
                 <div class="chart-wrap"><canvas id="chart-kg"></canvas></div>
             </div>
             <div class="chart-card">
@@ -1177,7 +1176,7 @@
         </div>
         <div class="charts-grid">
             <div class="chart-card">
-                <h3>🗺️ Producción por Parcela (kg)</h3>
+                <h3>🗺️ Producción por Parcela (gavetas)</h3>
                 <div class="chart-wrap"><canvas id="chart-parcela-kg"></canvas></div>
             </div>
             <div class="chart-card">
@@ -1691,9 +1690,9 @@
                             <th style="text-align:right">Nómina fijos</th>
                             <th style="text-align:right">Costo total</th>
                             <th style="text-align:right">Costo/ha</th>
-                            <th style="text-align:right">kg cosechados</th>
-                            <th style="text-align:right">kg/ha</th>
-                            <th style="text-align:right">kg/árbol</th>
+                            <th style="text-align:right">gavetas</th>
+                            <th style="text-align:right">gav/ha</th>
+                            <th style="text-align:right">gav/árbol</th>
                         </tr>
                     </thead>
                     <tbody id="rent-tbody"></tbody>
@@ -2230,7 +2229,7 @@
     <div class="modal">
         <h3>🧺 Registrar Cosecha de Campo</h3>
         <p style="font-size:.8rem;color:var(--muted);margin:-4px 0 12px">
-            Solo lo que se sabe en el campo. El precio y la calidad de exportación se registran después en Pos-cosecha.
+            En finca se cuentan <strong>gavetas</strong> (no se pesa). El peso en kg se registra al entregar, en el módulo <strong>🚚 Entregas</strong>.
         </p>
         <div class="form-row">
             <div class="form-group">
@@ -2238,36 +2237,32 @@
                 <input type="date" id="c-fecha">
             </div>
             <div class="form-group">
-                <label>Parcela</label>
+                <label>Parcela *</label>
                 <select id="c-parcela"></select>
             </div>
         </div>
+        <div class="form-group">
+            <label>Lote de hacienda *</label>
+            <input type="text" id="c-lote" placeholder="LH-2026-001">
+            <small style="display:block;color:var(--muted);font-size:.72rem;margin-top:3px">Se genera automático y puedes cambiarlo. Es el código que identifica esta fruta en toda la cadena hasta la planta.</small>
+        </div>
         <div class="form-row">
             <div class="form-group">
-                <label>Gavetas cosechadas</label>
-                <input type="number" id="c-gavetas" placeholder="40" step="1" min="0">
+                <label>Gavetas cosechadas (total) *</label>
+                <input type="number" id="c-gavetas" placeholder="40" step="1" min="0" oninput="_previewEnvioCosecha()">
             </div>
             <div class="form-group">
-                <label>Kg Cosechados (útil) *</label>
-                <input type="number" id="c-kg" placeholder="500" step="0.1" min="0">
+                <label>Gavetas a desecho / abono</label>
+                <input type="number" id="c-desecho-gav" placeholder="2" step="1" min="0" oninput="_previewEnvioCosecha()">
             </div>
         </div>
-        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px">
-            <div style="font-size:.75rem;font-weight:700;color:var(--primary);margin-bottom:10px;text-transform:uppercase;letter-spacing:.6px">Desecho en hacienda (fruta que se descarta en el campo)</div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label>Desecho (kg)</label>
-                    <input type="number" id="c-desecho-kg" placeholder="30" step="0.1" min="0">
-                </div>
-                <div class="form-group">
-                    <label>Desecho (gavetas)</label>
-                    <input type="number" id="c-desecho-gav" placeholder="2" step="1" min="0">
-                </div>
-            </div>
+        <div id="c-envio-preview" style="display:none;background:#e8f5e9;border:1px solid #b7dfca;border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:.83rem">
+            Gavetas de envío (a planta): <strong id="c-envio-val" style="color:var(--primary)">—</strong>
+            <span id="c-desecho-pct" style="color:var(--muted)"></span>
         </div>
         <div class="form-group">
             <label>Notas</label>
-            <textarea id="c-notas" rows="2" placeholder="Observaciones sobre la cosecha..."></textarea>
+            <textarea id="c-notas" rows="2" placeholder="Triaje, condiciones, observaciones..."></textarea>
         </div>
         <div class="modal-actions">
             <button class="btn btn-cancel" onclick="closeModal('modal-cosecha')">Cancelar</button>
@@ -2281,7 +2276,7 @@
     <div class="modal">
         <h3>🚚 Registrar Entrega a Planta</h3>
         <p style="font-size:.8rem;color:var(--muted);margin:-4px 0 12px">
-            El lote de hacienda se genera automáticamente pero puedes cambiarlo. Es el código que identificará esta fruta en toda la cadena.
+            Marca los <strong>lotes de cosecha</strong> que van en esta guía. Pueden ser de una o varias parcelas. Los kg se suman solos.
         </p>
         <div class="form-row">
             <div class="form-group">
@@ -2289,33 +2284,36 @@
                 <input type="date" id="e-fecha">
             </div>
             <div class="form-group">
-                <label>Lote de hacienda *</label>
-                <input type="text" id="e-lote" placeholder="LH-2026-001">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>Parcela de origen</label>
-                <select id="e-parcela"></select>
-            </div>
-            <div class="form-group">
-                <label>Kg Enviados *</label>
-                <input type="number" id="e-kg" placeholder="1200" step="0.1" min="0">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
                 <label>Nº Guía de remisión</label>
                 <input type="text" id="e-guia" placeholder="001-001-000012345">
             </div>
+        </div>
+        <div class="form-group">
+            <label>Lotes de cosecha a despachar *</label>
+            <div id="e-lotes-checklist" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px 4px;background:var(--bg)">
+                <!-- poblado por openEntrega() -->
+            </div>
+            <small id="e-gav-envio" style="display:block;color:var(--muted);font-size:.75rem;margin-top:4px"></small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Kg Enviados * <small style="color:var(--muted);font-weight:400">(peso real al entregar)</small></label>
+                <input type="number" id="e-kg" placeholder="0" step="0.1" min="0">
+            </div>
+            <div class="form-group">
+                <label>Guía / lote Iteranza</label>
+                <input type="text" id="e-guia-iteranza" placeholder="La que genera Iteranza al recibir">
+            </div>
+        </div>
+        <div class="form-row">
             <div class="form-group">
                 <label>Transporte / Chofer</label>
                 <input type="text" id="e-transporte" placeholder="Placa o nombre">
             </div>
-        </div>
-        <div class="form-group">
-            <label>Destino</label>
-            <input type="text" id="e-destino" placeholder="Iteranza / Durexporta" value="Iteranza">
+            <div class="form-group">
+                <label>Destino</label>
+                <input type="text" id="e-destino" placeholder="Iteranza / Durexporta" value="Iteranza">
+            </div>
         </div>
         <div class="form-group">
             <label>Notas</label>
@@ -3056,7 +3054,6 @@ function populateParcelaSelects() {
     const selects = [
         { id: 'l-parcela', default: 'Toda la finca' },
         { id: 'c-parcela', default: 'Toda la finca' },
-        { id: 'e-parcela', default: 'Varias / mezcla' },
         { id: 'g-parcela', default: 'General' }
     ];
     selects.forEach(({ id, default: def }) => {
@@ -3123,16 +3120,32 @@ function saveLabor() {
     render();
 }
 
+function _previewEnvioCosecha() {
+    const total   = parseInt(val('c-gavetas')) || 0;
+    const desecho = parseInt(val('c-desecho-gav')) || 0;
+    const box = document.getElementById('c-envio-preview');
+    if (!total) { box.style.display = 'none'; return; }
+    const envio = Math.max(0, total - desecho);
+    const pct   = total > 0 ? (desecho / total * 100) : 0;
+    document.getElementById('c-envio-val').textContent = envio + ' gavetas';
+    document.getElementById('c-desecho-pct').textContent = desecho ? ` · desecho ${pct.toFixed(0)}%` : '';
+    box.style.display = 'block';
+}
+
 function saveCosecha() {
-    const kg = numVal('c-kg');
-    if (!kg) return alert('Ingresa la cantidad de kg cosechados.');
+    const gavetas = parseInt(val('c-gavetas')) || 0;
+    const lote    = val('c-lote');
+    if (!gavetas) return alert('Ingresa las gavetas cosechadas.');
+    if (!lote)    return alert('El lote de hacienda es obligatorio (es tu ancla de trazabilidad).');
+    if (DB.get('cosechas').some(c => (c.loteHacienda||'').toLowerCase() === lote.toLowerCase())) {
+        if (!confirm(`⚠️ Ya existe una cosecha con el lote "${lote}".\n¿Guardar de todas formas?`)) return;
+    }
     DB.add('cosechas', {
         fecha:          val('c-fecha'),
         parcela:        val('c-parcela'),
-        gavetas:        parseInt(val('c-gavetas')) || 0,
-        kg,
-        desechoKg:      numVal('c-desecho-kg'),
-        desechoGavetas: parseInt(val('c-desecho-gav')) || 0,
+        loteHacienda:   lote,
+        gavetas,                                            // total cosechado
+        desechoGavetas: parseInt(val('c-desecho-gav')) || 0, // a abono orgánico
         notas:          val('c-notas')
     });
     closeModal('modal-cosecha');
@@ -3704,7 +3717,8 @@ function renderDashboard() {
 
     const totalHa       = parcelas.reduce((s, p) => s + (p.ha || 0), 0);
     const totalArboles  = parcelas.reduce((s, p) => s + (p.arboles || 0), 0);
-    const totalKg       = cosechas.reduce((s, c) => s + (c.kg || 0), 0);                    // producción de campo
+    const totalGavetas  = cosechas.reduce((s, c) => s + (parseInt(c.gavetas)||0), 0);          // producción de campo (gavetas)
+    const totalGavEnvio = cosechas.reduce((s, c) => s + Math.max(0,(parseInt(c.gavetas)||0)-(parseInt(c.desechoGavetas)||0)), 0);
     const totalKgPlanta = poscosecha.reduce((s, p) => s + (parseFloat(p.kgRecibidos)||0), 0); // recibido en planta
     const totalIngresos = poscosecha.reduce((s, p) => s + (parseFloat(p.valorFacturado)||0), 0); // ingreso real (liquidación)
     const totalGastos   = gastos.reduce((s, g) => s + (g.monto || 0), 0);
@@ -3745,8 +3759,8 @@ function renderDashboard() {
         </div>
         <div class="stat-card highlight">
             <div class="s-label">Cosecha de Campo</div>
-            <div class="s-value">${fmt.num(Math.round(totalKg))}<span style="font-size:1rem;font-weight:400"> kg</span></div>
-            <div class="s-sub">${fmt.num(Math.round(totalKgPlanta))} kg recibidos en planta</div>
+            <div class="s-value">${fmt.num(totalGavetas)}<span style="font-size:1rem;font-weight:400"> gav</span></div>
+            <div class="s-sub">${fmt.num(totalGavEnvio)} de envío · ${fmt.num(Math.round(totalKgPlanta))} kg en planta</div>
         </div>
         <div class="stat-card">
             <div class="s-label">Ingresos Totales</div>
@@ -3785,10 +3799,10 @@ function renderDashboard() {
         ? rc.map(c => `
             <div class="list-row">
                 <div>
-                    <div class="lr-title">${c.parcela || 'Cosecha'}</div>
-                    <div class="lr-sub">${fmt.date(c.fecha)}${c.gavetas ? ' · ' + c.gavetas + ' gavetas' : ''}</div>
+                    <div class="lr-title">${c.parcela || 'Cosecha'}${c.loteHacienda ? ' · ' + c.loteHacienda : ''}</div>
+                    <div class="lr-sub">${fmt.date(c.fecha)}</div>
                 </div>
-                <div class="lr-val">${fmt.kg(c.kg)}</div>
+                <div class="lr-val">${c.gavetas ? c.gavetas + ' gav' : '—'}</div>
             </div>`).join('')
         : '<div class="empty-state"><div class="e-icon">🧺</div><p>Sin cosechas aún</p></div>';
 
@@ -3851,33 +3865,37 @@ function renderCosechas() {
         tbody.innerHTML = emptyRow(9, '🧺', 'No hay cosechas registradas.');
         return;
     }
-    const totalKg   = data.reduce((s,c) => s + (parseFloat(c.kg)||0), 0);
-    const totalGav  = data.reduce((s,c) => s + (parseInt(c.gavetas)||0), 0);
-    const totalDesKg  = data.reduce((s,c) => s + (parseFloat(c.desechoKg)||0), 0);
+    const totalGav    = data.reduce((s,c) => s + (parseInt(c.gavetas)||0), 0);
     const totalDesGav = data.reduce((s,c) => s + (parseInt(c.desechoGavetas)||0), 0);
-    const pctDesTot = (totalKg + totalDesKg) > 0 ? (totalDesKg / (totalKg + totalDesKg) * 100) : 0;
+    const totalEnvio  = totalGav - totalDesGav;
+    const pctDesTot   = totalGav > 0 ? (totalDesGav / totalGav * 100) : 0;
+    const despachados = _lotesDespachados();
     const ordenado = [...data].sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''));
     tbody.innerHTML = ordenado.map(c => {
-        const kg = parseFloat(c.kg)||0, desKg = parseFloat(c.desechoKg)||0;
-        const pctDes = (kg + desKg) > 0 ? (desKg / (kg + desKg) * 100) : null;
+        const gav = parseInt(c.gavetas)||0, desGav = parseInt(c.desechoGavetas)||0;
+        const envio = Math.max(0, gav - desGav);
+        const pctDes = gav > 0 ? (desGav / gav * 100) : null;
+        const desp = c.loteHacienda && despachados.has(c.loteHacienda);
+        const loteCell = c.loteHacienda
+            ? `<strong>${c.loteHacienda}</strong>` + (desp ? `<br><span class="badge badge-blue" style="font-size:10px">🚚 despachado</span>` : `<br><span class="badge badge-yellow" style="font-size:10px">en finca</span>`)
+            : '—';
         return `<tr>
             <td style="white-space:nowrap">${fmt.date(c.fecha)}</td>
+            <td style="white-space:nowrap">${loteCell}</td>
             <td>${c.parcela || '—'}</td>
-            <td>${c.gavetas ? c.gavetas : '—'}</td>
-            <td><strong>${fmt.kg(c.kg)}</strong></td>
-            <td>${desKg ? fmt.kg(desKg) : '—'}</td>
-            <td>${c.desechoGavetas ? c.desechoGavetas : '—'}</td>
-            <td>${pctDes != null && desKg ? `<span class="badge ${pctDes>15?'badge-yellow':'badge-green'}">${pctDes.toFixed(1)}%</span>` : '—'}</td>
+            <td><strong>${gav || '—'}</strong></td>
+            <td>${desGav ? desGav : '—'}</td>
+            <td>${envio || '—'}</td>
+            <td>${pctDes != null && desGav ? `<span class="badge ${pctDes>15?'badge-yellow':'badge-green'}">${pctDes.toFixed(0)}%</span>` : '—'}</td>
             <td style="max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${c.notas||''}">${c.notas || '—'}</td>
             <td><button class="btn btn-danger-ghost" onclick="del('cosechas', ${c.id})">✕</button></td>
         </tr>`;
     }).join('') + `<tr style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
-        <td colspan="2" style="padding:10px 12px">TOTAL</td>
+        <td colspan="3" style="padding:10px 12px">TOTAL</td>
         <td>${totalGav || '—'}</td>
-        <td>${fmt.kg(totalKg)}</td>
-        <td>${totalDesKg ? fmt.kg(totalDesKg) : '—'}</td>
         <td>${totalDesGav || '—'}</td>
-        <td>${totalDesKg ? pctDesTot.toFixed(1) + '%' : '—'}</td>
+        <td>${totalEnvio || '—'}</td>
+        <td>${totalDesGav ? pctDesTot.toFixed(0) + '%' : '—'}</td>
         <td colspan="2"></td>
     </tr>`;
 }
@@ -3979,56 +3997,145 @@ function migrarIteranzaAPoscosecha() {
     console.log(`[migración] ${viejos.length} registro(s) Iteranza movidos a poscosecha.`);
 }
 
-// ── ENTREGAS A PLANTA (guías de remisión) ───────────────────
-// Sugiere el siguiente lote de hacienda: LH-<año>-<correlativo>
+// ── MIGRACIÓN: generar lote de hacienda para cosechas viejas sin lote ──
+function migrarLotesCosecha() {
+    if (localStorage.getItem('hda_migr_lotescosecha') === 'done') return;
+    const cosechas = DB.get('cosechas');
+    const sinLote = cosechas.filter(c => !c.loteHacienda &&
+        !(typeof c._tag === 'string' && c._tag.startsWith('iteranza_')));
+    if (!sinLote.length) { localStorage.setItem('hda_migr_lotescosecha', 'done'); return; }
+
+    // Máximo correlativo por año, considerando cosechas y entregas (legado)
+    const maxPorAnio = {};
+    const scan = arr => arr.forEach(x => {
+        const m = (x.loteHacienda||'').match(/^LH-(\d{4})-(\d+)$/);
+        if (m) maxPorAnio[m[1]] = Math.max(maxPorAnio[m[1]]||0, parseInt(m[2])||0);
+    });
+    scan(cosechas); scan(DB.get('entregas'));
+
+    const asignado = {};
+    [...sinLote].sort((a,b) => (a.fecha||'').localeCompare(b.fecha||'')).forEach(c => {
+        const anio = (c.fecha||'').slice(0,4) || String(new Date().getFullYear());
+        maxPorAnio[anio] = (maxPorAnio[anio]||0) + 1;
+        asignado[c.id] = 'LH-' + anio + '-' + String(maxPorAnio[anio]).padStart(3,'0');
+    });
+
+    const nuevo = cosechas.map(c => asignado[c.id] ? { ...c, loteHacienda: asignado[c.id] } : c);
+    DB.set('cosechas', nuevo);
+    localStorage.setItem('hda_migr_lotescosecha', 'done');
+    console.log(`[migración] ${Object.keys(asignado).length} cosecha(s) recibieron lote de hacienda.`);
+}
+
+// ── LOTE DE HACIENDA — nace en la cosecha ───────────────────
+// Sugiere el siguiente lote: LH-<año>-<correlativo>.
+// Escanea cosechas (donde nacen) y entregas viejas (legado) para evitar colisiones.
 function _siguienteLoteHacienda() {
     const anio = new Date().getFullYear();
     const pref = 'LH-' + anio + '-';
-    const nums = DB.get('entregas')
-        .map(e => (e.loteHacienda || '').match(new RegExp('^' + pref + '(\\d+)$')))
-        .filter(Boolean)
-        .map(m => parseInt(m[1]) || 0);
+    const re   = new RegExp('^' + pref + '(\\d+)$');
+    const nums = [
+        ...DB.get('cosechas').map(c => c.loteHacienda || ''),
+        ...DB.get('entregas').map(e => e.loteHacienda || '')
+    ].map(v => v.match(re)).filter(Boolean).map(m => parseInt(m[1]) || 0);
     const sig = (nums.length ? Math.max(...nums) : 0) + 1;
     return pref + String(sig).padStart(3, '0');
 }
 
+// Set de lotes ya despachados (referenciados por alguna entrega)
+function _lotesDespachados() {
+    const set = new Set();
+    DB.get('entregas').forEach(e => {
+        (Array.isArray(e.lotesDetalle) ? e.lotesDetalle : []).forEach(l => {
+            if (l && l.lote) set.add(l.lote);
+        });
+    });
+    return set;
+}
+
+function openCosecha() {
+    openModal('modal-cosecha');            // puebla c-parcela y muestra el modal
+    document.getElementById('c-fecha').value = todayISO();
+    document.getElementById('c-lote').value  = _siguienteLoteHacienda();
+}
+
 function openEntrega() {
-    openModal('modal-entrega'); // puebla selects de parcela y muestra el modal
-    document.getElementById('e-fecha').value      = todayISO();
-    document.getElementById('e-lote').value       = _siguienteLoteHacienda();
-    document.getElementById('e-kg').value         = '';
-    document.getElementById('e-guia').value       = '';
-    document.getElementById('e-transporte').value = '';
-    document.getElementById('e-destino').value    = 'Iteranza';
-    document.getElementById('e-notas').value      = '';
+    openModal('modal-entrega');
+    document.getElementById('e-fecha').value         = todayISO();
+    document.getElementById('e-kg').value            = '';
+    document.getElementById('e-guia').value          = '';
+    document.getElementById('e-guia-iteranza').value = '';
+    document.getElementById('e-transporte').value    = '';
+    document.getElementById('e-destino').value       = 'Iteranza';
+    document.getElementById('e-notas').value         = '';
+    _renderLotesChecklistEntrega();
+    _recalcGavEntrega();
+}
+
+// Poblar el checklist con los lotes de cosecha disponibles (no despachados aún).
+// Cada lote muestra sus GAVETAS DE ENVÍO (total − desecho). El peso en kg se pone manual (pesaje al entregar).
+function _renderLotesChecklistEntrega() {
+    const cont = document.getElementById('e-lotes-checklist');
+    if (!cont) return;
+    const despachados = _lotesDespachados();
+    const disponibles = DB.get('cosechas')
+        .filter(c => c.loteHacienda && !despachados.has(c.loteHacienda))
+        .sort((a,b) => (a.fecha||'').localeCompare(b.fecha||''));
+
+    if (!disponibles.length) {
+        cont.innerHTML = '<p style="color:var(--muted);font-size:.82rem;padding:8px 10px;margin:0">No hay lotes de cosecha disponibles. Registra una cosecha primero (cada cosecha genera su lote).</p>';
+        return;
+    }
+    cont.innerHTML = disponibles.map(c => {
+        const envio = Math.max(0, (parseInt(c.gavetas)||0) - (parseInt(c.desechoGavetas)||0));
+        return `
+        <label style="display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:6px;cursor:pointer;font-size:.85rem">
+            <input type="checkbox" class="e-lote-chk" style="width:auto;margin:0"
+                   data-lote="${c.loteHacienda}" data-parcela="${(c.parcela||'').replace(/"/g,'&quot;')}"
+                   data-gav="${envio}" data-cid="${c.id}"
+                   onchange="_recalcGavEntrega()">
+            <span style="flex:1"><strong>${c.loteHacienda}</strong> · ${c.parcela||'—'}
+                <span style="color:var(--muted)">· ${fmt.date(c.fecha)} · ${envio} gav envío</span></span>
+        </label>`;
+    }).join('');
+}
+
+// Sumar las gavetas de envío de los lotes marcados (referencia; el kg es manual)
+function _recalcGavEntrega() {
+    let suma = 0, n = 0;
+    document.querySelectorAll('#e-lotes-checklist .e-lote-chk:checked')
+        .forEach(chk => { suma += parseInt(chk.dataset.gav) || 0; n++; });
+    const el = document.getElementById('e-gav-envio');
+    if (el) el.textContent = n ? `${n} lote(s) · ${suma} gavetas de envío seleccionadas` : '';
 }
 
 function saveEntrega() {
     const fecha = val('e-fecha');
-    const lote  = val('e-lote');
     const kg    = numVal('e-kg');
-    if (!fecha) return alert('La fecha de envío es obligatoria.');
-    if (!lote)  return alert('El lote de hacienda es obligatorio (es tu ancla de trazabilidad).');
-    if (!kg)    return alert('Ingresa los kg enviados.');
+    const marcados = [...document.querySelectorAll('#e-lotes-checklist .e-lote-chk:checked')];
+    if (!fecha)            return alert('La fecha de envío es obligatoria.');
+    if (!marcados.length)  return alert('Marca al menos un lote de cosecha a despachar.');
+    if (!kg)               return alert('Ingresa los kg pesados al entregar.');
 
-    // Evitar lotes de hacienda duplicados
-    if (DB.get('entregas').some(e => (e.loteHacienda||'').toLowerCase() === lote.toLowerCase())) {
-        if (!confirm(`⚠️ Ya existe una entrega con el lote "${lote}".\n¿Guardar de todas formas?`)) return;
-    }
+    const lotesDetalle = marcados.map(chk => ({
+        lote:      chk.dataset.lote,
+        parcela:   chk.dataset.parcela,
+        gavetas:   parseInt(chk.dataset.gav) || 0,   // gavetas de envío del lote
+        cosechaId: chk.dataset.cid
+    }));
 
     DB.add('entregas', {
         fecha,
-        loteHacienda: lote,
-        parcela:    val('e-parcela'),
-        kg,
-        guia:       val('e-guia'),
-        transporte: val('e-transporte'),
-        destino:    val('e-destino') || 'Iteranza',
-        loteIteranza: '',   // se llena luego, cuando la planta devuelva su referencia
-        notas:      val('e-notas')
+        lotesDetalle,                                   // trazabilidad: qué lotes/parcelas van en la guía
+        kg,                                             // peso real pesado al entregar (total de la guía)
+        guia:         val('e-guia'),                    // guía de remisión de la hacienda
+        guiaIteranza: val('e-guia-iteranza'),           // guía/lote que Iteranza genera al recibir (empata lote hacienda↔planta)
+        loteIteranza: val('e-guia-iteranza'),           // compat: mismo valor para vistas que leen loteIteranza
+        transporte:   val('e-transporte'),
+        destino:      val('e-destino') || 'Iteranza',
+        notas:        val('e-notas')
     });
     closeModal('modal-entrega');
-    renderEntregas();
+    render(); // re-render cosechas (estado despachado) + entregas
 }
 
 function renderEntregas() {
@@ -4050,25 +4157,36 @@ function renderEntregas() {
     }
 
     if (!data.length) {
-        tbody.innerHTML = emptyRow(9, '🚚', 'No hay entregas registradas. Usa "＋ Nueva Entrega".');
+        tbody.innerHTML = emptyRow(8, '🚚', 'No hay entregas registradas. Usa "＋ Nueva Entrega".');
         return;
     }
     const ordenado = [...data].sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''));
-    tbody.innerHTML = ordenado.map(e => `
-        <tr>
+    tbody.innerHTML = ordenado.map(e => {
+        // Nuevo modelo (lotesDetalle) o entrega vieja (loteHacienda + parcela única)
+        const det = Array.isArray(e.lotesDetalle) ? e.lotesDetalle : [];
+        let lotesCell, parcelasCell;
+        if (det.length) {
+            lotesCell = det.map(l => l.lote).join('<br>');
+            parcelasCell = [...new Set(det.map(l => l.parcela).filter(Boolean))].join(', ') || '—';
+        } else {
+            lotesCell = e.loteHacienda || '—';
+            parcelasCell = e.parcela || '—';
+        }
+        if (e.loteIteranza) lotesCell += `<br><small style="color:#888">↔ ${e.loteIteranza}</small>`;
+        return `<tr>
             <td style="white-space:nowrap">${fmt.date(e.fecha)}</td>
-            <td><strong>${e.loteHacienda || '—'}</strong>${e.loteIteranza ? `<br><small style="color:#888">↔ ${e.loteIteranza}</small>` : ''}</td>
-            <td>${e.parcela || '—'}</td>
+            <td style="font-size:.85rem"><strong>${lotesCell}</strong></td>
+            <td style="font-size:.85rem">${parcelasCell}</td>
             <td><strong>${fmt.kg(e.kg)}</strong></td>
             <td style="font-size:.8rem;color:var(--muted)">${e.guia || '—'}</td>
             <td style="font-size:.85rem">${e.transporte || '—'}</td>
             <td>${e.destino || '—'}</td>
-            <td style="max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${e.notas||''}">${e.notas || '—'}</td>
             <td><button class="btn btn-danger-ghost" onclick="del('entregas', ${e.id})">✕</button></td>
-        </tr>`).join('') + `<tr style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
+        </tr>`;
+    }).join('') + `<tr style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
         <td colspan="3" style="padding:10px 12px">TOTAL</td>
         <td>${fmt.kg(totalEnviado)}</td>
-        <td colspan="5"></td>
+        <td colspan="4"></td>
     </tr>`;
 }
 
@@ -4186,9 +4304,9 @@ function renderGraficas() {
     const gasAño  = gastos.filter(g => g.fecha?.startsWith(selectedYear));
     const labAño  = labores.filter(l => l.fecha?.startsWith(selectedYear));
 
-    // kg por mes — producción de campo
+    // gavetas por mes — producción de campo
     const kgMes = Array(12).fill(0);
-    cosAño.forEach(c => { const m = parseInt(c.fecha?.slice(5,7)) - 1; if (m >= 0) kgMes[m] += (c.kg || 0); });
+    cosAño.forEach(c => { const m = parseInt(c.fecha?.slice(5,7)) - 1; if (m >= 0) kgMes[m] += (parseInt(c.gavetas) || 0); });
 
     // ingresos por mes — liquidación de pos-cosecha (ingreso real)
     const ingMes = Array(12).fill(0);
@@ -4203,9 +4321,9 @@ function renderGraficas() {
     const catMap = {};
     gasAño.forEach(g => { catMap[g.categoria] = (catMap[g.categoria] || 0) + (g.monto || 0); });
 
-    // kg por parcela
+    // gavetas por parcela
     const parMap = {};
-    cosAño.forEach(c => { parMap[c.parcela] = (parMap[c.parcela] || 0) + (c.kg || 0); });
+    cosAño.forEach(c => { parMap[c.parcela] = (parMap[c.parcela] || 0) + (parseInt(c.gavetas) || 0); });
 
     // labores por tipo
     const labMap = {};
@@ -4218,11 +4336,11 @@ function renderGraficas() {
         scales: { x: { ticks: { font: { size: 11 } } }, y: { ticks: { font: { size: 11 } } } }
     };
 
-    // Chart 1 — kg por mes
+    // Chart 1 — gavetas por mes
     destroyChart('chart-kg');
     chartInstances['chart-kg'] = new Chart(document.getElementById('chart-kg'), {
         type: 'bar',
-        data: { labels: MESES, datasets: [{ label: 'kg', data: kgMes, backgroundColor: '#52b788', borderRadius: 5 }] },
+        data: { labels: MESES, datasets: [{ label: 'gavetas', data: kgMes, backgroundColor: '#52b788', borderRadius: 5 }] },
         options: { ...baseOpts, plugins: { ...baseOpts.plugins, legend: { display: false } } }
     });
 
@@ -4260,14 +4378,14 @@ function renderGraficas() {
         options: baseOpts
     });
 
-    // Chart 5 — kg por parcela
+    // Chart 5 — gavetas por parcela
     destroyChart('chart-parcela-kg');
     const parLabels = Object.keys(parMap);
     chartInstances['chart-parcela-kg'] = new Chart(document.getElementById('chart-parcela-kg'), {
         type: 'bar',
         data: {
             labels: parLabels.length ? parLabels : ['Sin datos'],
-            datasets: [{ label: 'kg', data: parLabels.length ? Object.values(parMap) : [0], backgroundColor: COLORS, borderRadius: 5 }]
+            datasets: [{ label: 'gavetas', data: parLabels.length ? Object.values(parMap) : [0], backgroundColor: COLORS, borderRadius: 5 }]
         },
         options: { ...baseOpts, plugins: { ...baseOpts.plugins, legend: { display: false } }, indexAxis: 'y' }
     });
@@ -6595,11 +6713,11 @@ function renderRentabilidad() {
         s + calcularCostoEmpleador(t.salario, t.fechaIngreso).total, 0);
     const costoAnualFijo = costoMesFijo * 12;
 
-    // ── Calcular por parcela (costos + producción; el ingreso es a nivel finca) ──
+    // ── Calcular por parcela (costos + producción en gavetas; el ingreso es a nivel finca) ──
     const datos = parcelas.map(p => {
         const kgTotal   = cosFiltr
             .filter(c => c.parcela === p.nombre)
-            .reduce((s, c) => s + (parseFloat(c.kg)||0), 0);
+            .reduce((s, c) => s + (parseInt(c.gavetas)||0), 0);   // producción en gavetas
 
         // Gastos directos a esta parcela
         const gastosDir = gasFiltr
@@ -6652,7 +6770,7 @@ function renderRentabilidad() {
         { label:'Costos totales',      value:fmt.money(tot.costoTotal), sub:'Gastos + labores + nómina', cls:'warn' },
         { label:'Margen finca',        value:fmt.money(margenFinca),  sub: ingresoFinca>0 ? (margenFinca/ingresoFinca*100).toFixed(1)+'% de rentabilidad' : '—', cls: margenFinca>=0?'highlight':'danger' },
         { label:'Kg recibidos planta', value:fmt.num(Math.round(kgPlantaFinca))+' kg', sub: anioFiltro==='Todos'?'Total histórico':`En ${anioFiltro}`, cls:'' },
-        { label:'Kg cosecha campo',    value:fmt.num(Math.round(tot.kgTotal))+' kg', sub:'Producción registrada', cls:'' },
+        { label:'Gavetas cosecha campo', value:fmt.num(Math.round(tot.kgTotal))+' gav', sub:'Producción registrada', cls:'' },
     ];
     document.getElementById('rent-stats').innerHTML = statCards.map(s => `
         <div class="stat-card ${s.cls}">
@@ -6674,9 +6792,9 @@ function renderRentabilidad() {
             <td style="text-align:right;color:#c62828">${d.costNomina > 0 ? fmt.money(d.costNomina) : '<span style="color:#ddd">—</span>'}</td>
             <td style="text-align:right;font-weight:700">${fmt.money(d.costoTotal)}</td>
             <td style="text-align:right">${fmt.money(d.costoPorHa)}</td>
-            <td style="text-align:right">${fmt.num(d.kgTotal)} kg</td>
-            <td style="text-align:right">${fmt.num(d.kgPorHa)} kg</td>
-            <td style="text-align:right">${d.kgPorArbol.toFixed(1)} kg</td>
+            <td style="text-align:right">${fmt.num(d.kgTotal)} gav</td>
+            <td style="text-align:right">${fmt.num(Math.round(d.kgPorHa))} gav</td>
+            <td style="text-align:right">${d.kgPorArbol.toFixed(1)} gav</td>
         </tr>`;
     }).join('') || `<tr><td colspan="10" style="text-align:center;color:#aaa;padding:20px">Sin datos para el período seleccionado</td></tr>`;
 
@@ -6714,16 +6832,16 @@ function renderRentabilidad() {
                     <div style="font-weight:600;color:#c62828">${fmt.money(d.costNomina)}</div>
                 </div>
                 <div style="background:#f9f9f9;border-radius:6px;padding:6px 8px;text-align:center">
-                    <div style="color:#888;font-size:10px">kg CAMPO</div>
+                    <div style="color:#888;font-size:10px">GAVETAS</div>
                     <div style="font-weight:600">${fmt.num(Math.round(d.kgTotal))}</div>
                 </div>
                 <div style="background:#f9f9f9;border-radius:6px;padding:6px 8px;text-align:center">
-                    <div style="color:#888;font-size:10px">kg/ha</div>
-                    <div style="font-weight:600">${fmt.num(d.kgPorHa)}</div>
+                    <div style="color:#888;font-size:10px">gav/ha</div>
+                    <div style="font-weight:600">${fmt.num(Math.round(d.kgPorHa))}</div>
                 </div>
             </div>
             <div style="margin-top:8px;font-size:11px;color:#888;text-align:right">
-                ${d.kgTotal > 0 ? `Costo por kg: <strong>${fmt.money(d.kgTotal > 0 ? d.costoTotal / d.kgTotal : 0)}</strong>` : 'Sin producción de campo registrada'}
+                ${d.kgTotal > 0 ? `Costo por gaveta: <strong>${fmt.money(d.kgTotal > 0 ? d.costoTotal / d.kgTotal : 0)}</strong>` : 'Sin producción de campo registrada'}
             </div>
         </div>`;
     }).join('');
@@ -7558,7 +7676,7 @@ function entrarConRol() {
     aplicarRol(_rolActual);
     loadApiKey();
     renderFacturasHistory();
-    initFirestore().then(() => { migrarIteranzaAPoscosecha(); render(); });
+    initFirestore().then(() => { migrarIteranzaAPoscosecha(); migrarLotesCosecha(); render(); });
 }
 
 function aplicarRol(rol) {
@@ -8152,7 +8270,7 @@ function _aiResumenAccion(accion) {
     switch (accion.tipo) {
         case 'add_labor':      return (d.fecha||'') + ' · ' + (d.tipo||'') + ' en ' + (d.parcela||'') + '\n' + (d.descripcion||'') + '\nCosto: $' + (d.costo||0) + ' · ' + (d.estado||'');
         case 'add_gasto':      return (d.fecha||'') + ' · ' + (d.categoria||'') + '\n' + (d.descripcion||'') + '\nMonto: $' + (d.monto||0) + (d.parcela ? ' · ' + d.parcela : '');
-        case 'add_cosecha':    return (d.fecha||'') + ' · ' + (d.parcela||'') + '\n' + (d.kg||0) + ' kg útiles' + (d.gavetas ? ' · ' + d.gavetas + ' gavetas' : '') + ((parseFloat(d.desechoKg)||0) ? '\nDesecho: ' + d.desechoKg + ' kg' + (d.desechoGavetas ? '/' + d.desechoGavetas + ' gav' : '') : '');
+        case 'add_cosecha':    return (d.fecha||'') + ' · ' + (d.parcela||'') + '\n' + (d.gavetas||0) + ' gavetas' + ((parseInt(d.desechoGavetas)||0) ? ' · ' + d.desechoGavetas + ' a abono' : '');
         case 'add_observacion':return (d.fechaISO||d.fecha||'') + ' · ' + (d.parcelaNombre||'') + '\n' + (d.descripcion||'') + (d.severidad ? '\nSeveridad: ' + d.severidad : '');
         case 'add_insumo':     return (d.nombre||'') + ' (' + (d.categoria||'') + ')\nStock: ' + (d.stock||0) + ' ' + (d.unidad||'') + (d.precio ? ' · $' + d.precio : '');
         default:               return JSON.stringify(d);
@@ -8181,8 +8299,9 @@ function aiEjecutarAccion(idx) {
             case 'add_cosecha':
                 DB.add('cosechas', {
                     fecha: d.fecha||'', parcela: d.parcela||'',
-                    gavetas: parseInt(d.gavetas)||0, kg: parseFloat(d.kg)||0,
-                    desechoKg: parseFloat(d.desechoKg)||0, desechoGavetas: parseInt(d.desechoGavetas)||0,
+                    loteHacienda: d.loteHacienda || _siguienteLoteHacienda(),
+                    gavetas: parseInt(d.gavetas)||0,
+                    desechoGavetas: parseInt(d.desechoGavetas)||0,
                     notas: d.notas||''
                 });
                 break;
@@ -8234,7 +8353,7 @@ function _aiConstruirContexto() {
     const muestreos    = DB.get('muestreos').slice(0, 5);
 
     // Totales financieros
-    const totalCosechaKg      = cosechas.reduce((s,c) => s + (parseFloat(c.kg)||0), 0);        // producción de campo
+    const totalCosechaGav     = cosechas.reduce((s,c) => s + (parseInt(c.gavetas)||0), 0);     // producción de campo (gavetas)
     const totalKgPlanta       = poscosecha.reduce((s,p) => s + (parseFloat(p.kgRecibidos)||0), 0);
     const totalIngresoReal    = poscosecha.reduce((s,p) => s + (parseFloat(p.valorFacturado)||0), 0); // ingreso real (liquidación)
     const totalGastos         = gastos.reduce((s,g) => s + (parseFloat(g.monto)||0), 0);
@@ -8307,17 +8426,19 @@ function _aiConstruirContexto() {
     }
 
     // ── COSECHAS ──
-    ctx += '\nCOSECHA DE CAMPO últimos 90 días (' + cosechas.length + ' registros) — ' + totalCosechaKg.toFixed(0) + ' kg útiles bajados del árbol:\n';
+    ctx += '\nCOSECHA DE CAMPO últimos 90 días (' + cosechas.length + ' registros) — ' + totalCosechaGav + ' gavetas cosechadas (en finca solo se cuentan gavetas, no se pesa):\n';
     if (!cosechas.length) ctx += '  (sin registros de cosecha de campo)\n';
     cosechas.slice(0,12).forEach(c => {
-        ctx += '  ' + (c.fechaISO||c.fecha||'') + ': ' + (c.parcela||'') + ' — ' + (c.kg||0) + ' kg útiles';
-        if (c.gavetas)   ctx += ', ' + c.gavetas + ' gavetas';
-        const desKg = parseFloat(c.desechoKg)||0;
-        if (desKg) {
-            const pct = ((parseFloat(c.kg)||0)+desKg) > 0 ? (desKg/((parseFloat(c.kg)||0)+desKg)*100).toFixed(1) : '0';
-            ctx += ', desecho ' + desKg + ' kg' + (c.desechoGavetas ? '/' + c.desechoGavetas + ' gav' : '') + ' (' + pct + '%)';
+        const gav = parseInt(c.gavetas)||0, desGav = parseInt(c.desechoGavetas)||0;
+        const envio = Math.max(0, gav - desGav);
+        ctx += '  ' + (c.fechaISO||c.fecha||'') + ': ';
+        if (c.loteHacienda) ctx += 'lote ' + c.loteHacienda + ' · ';
+        ctx += (c.parcela||'') + ' — ' + gav + ' gavetas';
+        if (desGav) {
+            const pct = gav > 0 ? (desGav/gav*100).toFixed(0) : '0';
+            ctx += ' (' + envio + ' envío, ' + desGav + ' a abono = ' + pct + '% desecho)';
         }
-        if (c.notas)     ctx += ' (' + c.notas + ')';
+        if (c.notas)     ctx += ' [' + c.notas + ']';
         ctx += '\n';
     });
 
@@ -8326,8 +8447,11 @@ function _aiConstruirContexto() {
     ctx += '\nENTREGAS A PLANTA últimos 90 días (' + entregas.length + ' guías) — ' + totalEnviado.toFixed(0) + ' kg enviados:\n';
     if (!entregas.length) ctx += '  (sin entregas registradas)\n';
     entregas.slice(0,12).forEach(e => {
-        ctx += '  ' + (e.fecha||'') + ': lote ' + (e.loteHacienda||'?') + ' — ' + (parseFloat(e.kg)||0).toFixed(0) + ' kg';
-        if (e.parcela)      ctx += ' de ' + e.parcela;
+        const det = Array.isArray(e.lotesDetalle) ? e.lotesDetalle : [];
+        const lotesTxt = det.length ? det.map(l => l.lote).join('+') : (e.loteHacienda || '?');
+        const parcelasTxt = det.length ? [...new Set(det.map(l => l.parcela).filter(Boolean))].join(', ') : (e.parcela||'');
+        ctx += '  ' + (e.fecha||'') + ': lotes ' + lotesTxt + ' — ' + (parseFloat(e.kg)||0).toFixed(0) + ' kg';
+        if (parcelasTxt)    ctx += ' de ' + parcelasTxt;
         if (e.destino)      ctx += ' → ' + e.destino;
         if (e.loteIteranza) ctx += ' (lote planta: ' + e.loteIteranza + ')';
         ctx += '\n';
@@ -8479,7 +8603,7 @@ async function enviarMensajeIA() {
         '[[ACCIÓN:{"tipo":"add_labor","datos":{"fecha":"YYYY-MM-DD","tipo":"Fumigación","parcela":"NombreParcela","descripcion":"detalle","trabajadores":2,"costo":50,"estado":"completado"}}]]\n\n' +
         'Acciones disponibles y campos:\n' +
         'add_gasto     → {fecha, categoria, descripcion, monto, parcela}\n' +
-        'add_cosecha   → {fecha, parcela, gavetas, kg, desechoKg, desechoGavetas}  (kg = útil bajado del árbol; precio y calidad NO se conocen en cosecha, van en pos-cosecha)\n' +
+        'add_cosecha   → {fecha, parcela, gavetas, desechoGavetas}  (en cosecha SOLO se cuentan gavetas, no se pesa; el kg se registra al entregar. desechoGavetas = gavetas a abono orgánico)\n' +
         'add_observacion → {fecha, fechaISO, parcelaNombre, descripcion, severidad}\n' +
         'add_insumo    → {nombre, categoria, stock, unidad, precio}\n\n' +
         'REGLAS:\n' +
