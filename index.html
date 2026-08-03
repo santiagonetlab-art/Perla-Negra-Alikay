@@ -966,17 +966,17 @@
         </div>
     </div>
 
-    <!-- ── ENTREGAS (guías de remisión a planta) ── -->
+    <!-- ── ENTREGAS / SALIDAS (a Iteranza o venta directa) ── -->
     <div id="page-entregas" class="page">
         <div class="page-header">
-            <h2>🚚 Entregas a Planta</h2>
+            <h2>🚚 Entregas / Salidas</h2>
             <div class="header-actions">
                 <button class="btn btn-outline btn-sm" onclick="exportCSV('entregas')">⬇ Exportar</button>
-                <button class="btn btn-primary" onclick="openEntrega()">＋ Nueva Entrega</button>
+                <button class="btn btn-primary" onclick="openEntrega()">＋ Nueva Salida</button>
             </div>
         </div>
         <p style="font-size:.82rem;color:var(--muted);margin:-6px 0 14px">
-            Cada guía de remisión despacha uno o varios <strong>lotes de cosecha</strong>. Los lotes son tu ancla de trazabilidad: cuando Iteranza te devuelva el código en la liquidación, cruzarás campo ↔ planta.
+            Toda salida de fruta despacha uno o varios <strong>lotes de cosecha</strong>. <strong>🏭 Iteranza</strong>: el $ llega después en Pos-cosecha. <strong>🤝 Venta directa</strong>: el ingreso se registra aquí mismo (no genera rechazo ni pos-cosecha).
         </p>
         <div id="entregas-resumen" class="stats-grid" style="margin-bottom:18px"></div>
         <div class="card">
@@ -985,12 +985,12 @@
                     <thead>
                         <tr>
                             <th>Fecha</th>
+                            <th>Tipo</th>
                             <th>Lotes despachados</th>
                             <th>Parcelas</th>
-                            <th>Kg Enviados</th>
-                            <th>Guía remisión</th>
-                            <th>Transporte</th>
-                            <th>Destino</th>
+                            <th>Kg</th>
+                            <th>Comprador / Destino</th>
+                            <th>Valor</th>
                             <th></th>
                         </tr>
                     </thead>
@@ -2271,53 +2271,76 @@
     </div>
 </div>
 
-<!-- MODAL ENTREGA A PLANTA -->
+<!-- MODAL ENTREGA / SALIDA DE FRUTA -->
 <div class="modal-overlay" id="modal-entrega">
     <div class="modal">
-        <h3>🚚 Registrar Entrega a Planta</h3>
+        <h3>🚚 Registrar Salida de Fruta</h3>
         <p style="font-size:.8rem;color:var(--muted);margin:-4px 0 12px">
-            Marca los <strong>lotes de cosecha</strong> que van en esta guía. Pueden ser de una o varias parcelas. Los kg se suman solos.
+            Marca los <strong>lotes de cosecha</strong> que van en esta guía (de una o varias parcelas). El peso en kg se registra aquí.
         </p>
         <div class="form-row">
             <div class="form-group">
-                <label>Fecha de envío *</label>
+                <label>Fecha de salida *</label>
                 <input type="date" id="e-fecha">
             </div>
+            <div class="form-group">
+                <label>Tipo de salida *</label>
+                <select id="e-tipo" onchange="_toggleTipoEntrega()">
+                    <option value="iteranza">🏭 Iteranza (liquida después)</option>
+                    <option value="venta_directa">🤝 Venta directa (final aquí)</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-row">
             <div class="form-group">
                 <label>Nº Guía de remisión</label>
                 <input type="text" id="e-guia" placeholder="001-001-000012345">
             </div>
+            <div class="form-group">
+                <label id="e-destino-label">Comprador / Destino</label>
+                <input type="text" id="e-destino" placeholder="Iteranza / Durexporta" value="Iteranza">
+            </div>
         </div>
         <div class="form-group">
             <label>Lotes de cosecha a despachar *</label>
-            <div id="e-lotes-checklist" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px 4px;background:var(--bg)">
+            <div id="e-lotes-checklist" style="max-height:170px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px 4px;background:var(--bg)">
                 <!-- poblado por openEntrega() -->
             </div>
             <small id="e-gav-envio" style="display:block;color:var(--muted);font-size:.75rem;margin-top:4px"></small>
         </div>
         <div class="form-row">
             <div class="form-group">
-                <label>Kg Enviados * <small style="color:var(--muted);font-weight:400">(peso real al entregar)</small></label>
-                <input type="number" id="e-kg" placeholder="0" step="0.1" min="0">
+                <label>Kg Enviados * <small style="color:var(--muted);font-weight:400">(peso real)</small></label>
+                <input type="number" id="e-kg" placeholder="0" step="0.1" min="0" oninput="_recalcValorEntrega()">
             </div>
-            <div class="form-group">
-                <label>Guía / lote Iteranza</label>
-                <input type="text" id="e-guia-iteranza" placeholder="La que genera Iteranza al recibir">
-            </div>
-        </div>
-        <div class="form-row">
             <div class="form-group">
                 <label>Transporte / Chofer</label>
                 <input type="text" id="e-transporte" placeholder="Placa o nombre">
             </div>
-            <div class="form-group">
-                <label>Destino</label>
-                <input type="text" id="e-destino" placeholder="Iteranza / Durexporta" value="Iteranza">
+        </div>
+        <!-- Bloque Iteranza: guía que empata lote hacienda ↔ planta -->
+        <div class="form-group" id="e-block-iteranza">
+            <label>Guía / lote Iteranza</label>
+            <input type="text" id="e-guia-iteranza" placeholder="La que genera Iteranza al recibir">
+            <small style="display:block;color:var(--muted);font-size:.72rem;margin-top:3px">El valor final ($) llega después en el módulo Pos-cosecha (liquidación).</small>
+        </div>
+        <!-- Bloque Venta directa: el ingreso se registra aquí -->
+        <div id="e-block-directa" style="display:none">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Precio por kg ($) *</label>
+                    <input type="number" id="e-precio" placeholder="0.90" step="0.01" min="0" oninput="_recalcValorEntrega()">
+                </div>
+                <div class="form-group">
+                    <label>Valor total ($) <small style="color:var(--muted);font-weight:400">(auto)</small></label>
+                    <input type="number" id="e-valor" placeholder="0" step="0.01" min="0">
+                </div>
             </div>
+            <small style="display:block;color:var(--muted);font-size:.72rem;margin-top:-8px;margin-bottom:6px">Este es el ingreso de la venta — se registra aquí, sin pos-cosecha.</small>
         </div>
         <div class="form-group">
             <label>Notas</label>
-            <textarea id="e-notas" rows="2" placeholder="Observaciones de la entrega..."></textarea>
+            <textarea id="e-notas" rows="2" placeholder="Observaciones de la salida..."></textarea>
         </div>
         <div class="modal-actions">
             <button class="btn btn-cancel" onclick="closeModal('modal-entrega')">Cancelar</button>
@@ -3720,7 +3743,9 @@ function renderDashboard() {
     const totalGavetas  = cosechas.reduce((s, c) => s + (parseInt(c.gavetas)||0), 0);          // producción de campo (gavetas)
     const totalGavEnvio = cosechas.reduce((s, c) => s + Math.max(0,(parseInt(c.gavetas)||0)-(parseInt(c.desechoGavetas)||0)), 0);
     const totalKgPlanta = poscosecha.reduce((s, p) => s + (parseFloat(p.kgRecibidos)||0), 0); // recibido en planta
-    const totalIngresos = poscosecha.reduce((s, p) => s + (parseFloat(p.valorFacturado)||0), 0); // ingreso real (liquidación)
+    const ingresoIteranza = poscosecha.reduce((s, p) => s + (parseFloat(p.valorFacturado)||0), 0);  // liquidación Iteranza
+    const ingresoDirecto  = DB.get('entregas').filter(e => e.tipoSalida === 'venta_directa').reduce((s, e) => s + (parseFloat(e.valorTotal)||0), 0); // ventas directas
+    const totalIngresos = ingresoIteranza + ingresoDirecto;                                   // ingreso real total
     const totalGastos   = gastos.reduce((s, g) => s + (g.monto || 0), 0);
     const totalLabCosto = labores.reduce((s, l) => s + (l.costo || 0), 0);
     const pendientes    = labores.filter(l => l.estado === 'Pendiente').length;
@@ -3765,7 +3790,7 @@ function renderDashboard() {
         <div class="stat-card">
             <div class="s-label">Ingresos Totales</div>
             <div class="s-value" style="font-size:1.4rem">${fmt.money(totalIngresos)}</div>
-            <div class="s-sub">liquidación planta</div>
+            <div class="s-sub">Iteranza ${fmt.money(ingresoIteranza)} · directa ${fmt.money(ingresoDirecto)}</div>
         </div>
         <div class="stat-card danger">
             <div class="s-label">Gastos Totales</div>
@@ -4061,14 +4086,39 @@ function openCosecha() {
 function openEntrega() {
     openModal('modal-entrega');
     document.getElementById('e-fecha').value         = todayISO();
+    document.getElementById('e-tipo').value          = 'iteranza';
     document.getElementById('e-kg').value            = '';
     document.getElementById('e-guia').value          = '';
     document.getElementById('e-guia-iteranza').value = '';
+    document.getElementById('e-precio').value        = '';
+    document.getElementById('e-valor').value         = '';
     document.getElementById('e-transporte').value    = '';
     document.getElementById('e-destino').value       = 'Iteranza';
     document.getElementById('e-notas').value         = '';
+    _toggleTipoEntrega();
     _renderLotesChecklistEntrega();
     _recalcGavEntrega();
+}
+
+// Mostrar campos según el canal: Iteranza (guía planta) vs Venta directa (precio)
+function _toggleTipoEntrega() {
+    const tipo = document.getElementById('e-tipo').value;
+    const esDir = tipo === 'venta_directa';
+    document.getElementById('e-block-iteranza').style.display = esDir ? 'none' : '';
+    document.getElementById('e-block-directa').style.display  = esDir ? '' : 'none';
+    document.getElementById('e-destino-label').textContent = esDir ? 'Comprador *' : 'Comprador / Destino';
+    const dest = document.getElementById('e-destino');
+    if (esDir && dest.value === 'Iteranza') dest.value = '';
+    if (!esDir && !dest.value)              dest.value = 'Iteranza';
+    if (esDir) _recalcValorEntrega();
+}
+
+// Venta directa: valor total = kg × precio/kg (editable después)
+function _recalcValorEntrega() {
+    if (document.getElementById('e-tipo').value !== 'venta_directa') return;
+    const kg     = numVal('e-kg');
+    const precio = numVal('e-precio');
+    if (kg && precio) document.getElementById('e-valor').value = +(kg * precio).toFixed(2);
 }
 
 // Poblar el checklist con los lotes de cosecha disponibles (no despachados aún).
@@ -4110,11 +4160,14 @@ function _recalcGavEntrega() {
 
 function saveEntrega() {
     const fecha = val('e-fecha');
+    const tipo  = val('e-tipo') || 'iteranza';
     const kg    = numVal('e-kg');
+    const esDir = tipo === 'venta_directa';
     const marcados = [...document.querySelectorAll('#e-lotes-checklist .e-lote-chk:checked')];
-    if (!fecha)            return alert('La fecha de envío es obligatoria.');
+    if (!fecha)            return alert('La fecha de salida es obligatoria.');
     if (!marcados.length)  return alert('Marca al menos un lote de cosecha a despachar.');
-    if (!kg)               return alert('Ingresa los kg pesados al entregar.');
+    if (!kg)               return alert('Ingresa los kg pesados.');
+    if (esDir && !val('e-destino')) return alert('Indica el comprador de la venta directa.');
 
     const lotesDetalle = marcados.map(chk => ({
         lote:      chk.dataset.lote,
@@ -4123,15 +4176,21 @@ function saveEntrega() {
         cosechaId: chk.dataset.cid
     }));
 
+    const precioKg   = esDir ? numVal('e-precio') : 0;
+    const valorTotal = esDir ? (numVal('e-valor') || kg * precioKg) : 0;
+
     DB.add('entregas', {
         fecha,
+        tipoSalida:   tipo,                             // 'iteranza' | 'venta_directa'
         lotesDetalle,                                   // trazabilidad: qué lotes/parcelas van en la guía
         kg,                                             // peso real pesado al entregar (total de la guía)
         guia:         val('e-guia'),                    // guía de remisión de la hacienda
-        guiaIteranza: val('e-guia-iteranza'),           // guía/lote que Iteranza genera al recibir (empata lote hacienda↔planta)
-        loteIteranza: val('e-guia-iteranza'),           // compat: mismo valor para vistas que leen loteIteranza
+        guiaIteranza: esDir ? '' : val('e-guia-iteranza'),
+        loteIteranza: esDir ? '' : val('e-guia-iteranza'), // compat con vistas que leen loteIteranza
+        precioKg,                                       // solo venta directa
+        valorTotal,                                     // ingreso de la venta directa (0 si Iteranza)
         transporte:   val('e-transporte'),
-        destino:      val('e-destino') || 'Iteranza',
+        destino:      val('e-destino') || (esDir ? 'Comprador' : 'Iteranza'),
         notas:        val('e-notas')
     });
     closeModal('modal-entrega');
@@ -4144,24 +4203,30 @@ function renderEntregas() {
     const resum = document.getElementById('entregas-resumen');
     if (!tbody) return;
 
-    // Resumen: enviado vs recibido en planta (merma)
-    const totalEnviado  = data.reduce((s,e) => s + (parseFloat(e.kg)||0), 0);
+    // Separar por canal: Iteranza (liquida en pos-cosecha) vs venta directa (final aquí)
+    const esDirecta = e => e.tipoSalida === 'venta_directa';
+    const kgIteranza = data.filter(e => !esDirecta(e)).reduce((s,e) => s + (parseFloat(e.kg)||0), 0);
+    const kgDirecta  = data.filter(esDirecta).reduce((s,e) => s + (parseFloat(e.kg)||0), 0);
+    const totalKg    = kgIteranza + kgDirecta;
+    const nDirectas  = data.filter(esDirecta).length;
+    const ingresoDirecto = data.filter(esDirecta).reduce((s,e) => s + (parseFloat(e.valorTotal)||0), 0);
     const totalRecibido = DB.get('poscosecha').reduce((s,p) => s + (parseFloat(p.kgRecibidos)||0), 0);
-    const merma    = totalEnviado - totalRecibido;
-    const mermaPct = totalEnviado > 0 ? (merma / totalEnviado * 100) : 0;
+    const merma    = kgIteranza - totalRecibido;   // solo canal Iteranza
+    const mermaPct = kgIteranza > 0 ? (merma / kgIteranza * 100) : 0;
     if (resum) {
         resum.innerHTML = `
-            <div class="stat-card highlight"><div class="s-label">Total Enviado</div><div class="s-value">${fmt.num(Math.round(totalEnviado))}<span style="font-size:1rem;font-weight:400"> kg</span></div><div class="s-sub">${data.length} entrega${data.length!==1?'s':''}</div></div>
-            <div class="stat-card"><div class="s-label">Recibido en Planta</div><div class="s-value">${fmt.num(Math.round(totalRecibido))}<span style="font-size:1rem;font-weight:400"> kg</span></div><div class="s-sub">de pos-cosecha</div></div>
-            <div class="stat-card ${merma>0?'warn':''}"><div class="s-label">Merma campo → planta</div><div class="s-value" style="font-size:1.5rem">${totalRecibido>0 ? fmt.num(Math.round(merma))+' kg' : '—'}</div><div class="s-sub">${totalRecibido>0 ? mermaPct.toFixed(1)+'% del enviado' : 'sin datos de planta'}</div></div>`;
+            <div class="stat-card highlight"><div class="s-label">Salidas totales</div><div class="s-value">${fmt.num(Math.round(totalKg))}<span style="font-size:1rem;font-weight:400"> kg</span></div><div class="s-sub">${fmt.num(Math.round(kgIteranza))} Iteranza · ${fmt.num(Math.round(kgDirecta))} directa</div></div>
+            <div class="stat-card ${merma>0?'warn':''}"><div class="s-label">Merma campo → planta</div><div class="s-value" style="font-size:1.5rem">${totalRecibido>0 ? fmt.num(Math.round(merma))+' kg' : '—'}</div><div class="s-sub">${totalRecibido>0 ? mermaPct.toFixed(1)+'% (solo Iteranza)' : 'sin datos de planta'}</div></div>
+            <div class="stat-card"><div class="s-label">Ingreso venta directa</div><div class="s-value" style="font-size:1.5rem">${fmt.money(ingresoDirecto)}</div><div class="s-sub">${nDirectas} venta${nDirectas!==1?'s':''} directa${nDirectas!==1?'s':''}</div></div>`;
     }
 
     if (!data.length) {
-        tbody.innerHTML = emptyRow(8, '🚚', 'No hay entregas registradas. Usa "＋ Nueva Entrega".');
+        tbody.innerHTML = emptyRow(8, '🚚', 'No hay salidas registradas. Usa "＋ Nueva Entrega".');
         return;
     }
     const ordenado = [...data].sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''));
     tbody.innerHTML = ordenado.map(e => {
+        const dir = esDirecta(e);
         // Nuevo modelo (lotesDetalle) o entrega vieja (loteHacienda + parcela única)
         const det = Array.isArray(e.lotesDetalle) ? e.lotesDetalle : [];
         let lotesCell, parcelasCell;
@@ -4173,20 +4238,28 @@ function renderEntregas() {
             parcelasCell = e.parcela || '—';
         }
         if (e.loteIteranza) lotesCell += `<br><small style="color:#888">↔ ${e.loteIteranza}</small>`;
+        const tipoCell = dir
+            ? '<span class="badge badge-green" style="font-size:11px">🤝 Directa</span>'
+            : '<span class="badge badge-blue" style="font-size:11px">🏭 Iteranza</span>';
+        const valorCell = dir
+            ? `<strong style="color:var(--primary)">${fmt.money(e.valorTotal)}</strong>${e.precioKg ? `<br><small style="color:#888">$${(+e.precioKg).toFixed(2)}/kg</small>` : ''}`
+            : '<small style="color:#888">→ pos-cosecha</small>';
         return `<tr>
             <td style="white-space:nowrap">${fmt.date(e.fecha)}</td>
+            <td style="white-space:nowrap">${tipoCell}</td>
             <td style="font-size:.85rem"><strong>${lotesCell}</strong></td>
             <td style="font-size:.85rem">${parcelasCell}</td>
             <td><strong>${fmt.kg(e.kg)}</strong></td>
-            <td style="font-size:.8rem;color:var(--muted)">${e.guia || '—'}</td>
-            <td style="font-size:.85rem">${e.transporte || '—'}</td>
-            <td>${e.destino || '—'}</td>
+            <td style="font-size:.85rem">${e.destino || '—'}</td>
+            <td style="white-space:nowrap">${valorCell}</td>
             <td><button class="btn btn-danger-ghost" onclick="del('entregas', ${e.id})">✕</button></td>
         </tr>`;
     }).join('') + `<tr style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
-        <td colspan="3" style="padding:10px 12px">TOTAL</td>
-        <td>${fmt.kg(totalEnviado)}</td>
-        <td colspan="4"></td>
+        <td colspan="4" style="padding:10px 12px">TOTAL</td>
+        <td>${fmt.kg(totalKg)}</td>
+        <td></td>
+        <td style="color:var(--primary)">${ingresoDirecto>0 ? fmt.money(ingresoDirecto) : ''}</td>
+        <td></td>
     </tr>`;
 }
 
@@ -4308,9 +4381,11 @@ function renderGraficas() {
     const kgMes = Array(12).fill(0);
     cosAño.forEach(c => { const m = parseInt(c.fecha?.slice(5,7)) - 1; if (m >= 0) kgMes[m] += (parseInt(c.gavetas) || 0); });
 
-    // ingresos por mes — liquidación de pos-cosecha (ingreso real)
+    // ingresos por mes — liquidación Iteranza (pos-cosecha) + ventas directas (entregas)
     const ingMes = Array(12).fill(0);
     posAño.forEach(p => { const m = parseInt((p.fecha||'').slice(5,7)) - 1; if (m >= 0) ingMes[m] += (parseFloat(p.valorFacturado)||0); });
+    DB.get('entregas').filter(e => e.tipoSalida === 'venta_directa' && (e.fecha||'').startsWith(selectedYear))
+        .forEach(e => { const m = parseInt((e.fecha||'').slice(5,7)) - 1; if (m >= 0) ingMes[m] += (parseFloat(e.valorTotal)||0); });
 
     // gastos por mes
     const gasMes = Array(12).fill(0);
@@ -6695,12 +6770,15 @@ function renderRentabilidad() {
 
     const cosFiltr = filtrar(cosechas);
     const posFiltr = filtrar(poscosecha);
+    const entFiltr = filtrar(DB.get('entregas'));
     const gasFiltr = filtrar(gastos);
     const labFiltr = filtrar(labores);
     const jorFiltr = filtrar(jornadas);
 
-    // Ingreso real de la finca = liquidación de pos-cosecha (no atribuible por parcela)
-    const ingresoFinca = posFiltr.reduce((s, p) => s + (parseFloat(p.valorFacturado)||0), 0);
+    // Ingreso real de la finca = liquidación Iteranza (pos-cosecha) + ventas directas (entregas)
+    const ingresoIteranza = posFiltr.reduce((s, p) => s + (parseFloat(p.valorFacturado)||0), 0);
+    const ingresoDirecto  = entFiltr.filter(e => e.tipoSalida === 'venta_directa').reduce((s, e) => s + (parseFloat(e.valorTotal)||0), 0);
+    const ingresoFinca  = ingresoIteranza + ingresoDirecto;
     const kgPlantaFinca = posFiltr.reduce((s, p) => s + (parseFloat(p.kgRecibidos)||0), 0);
 
     // ── Costo nómina fija distribuida por ha sembradas ────────
@@ -6766,7 +6844,7 @@ function renderRentabilidad() {
     const margenFinca = ingresoFinca - tot.costoTotal;
 
     const statCards = [
-        { label:'Ingreso pos-cosecha', value:fmt.money(ingresoFinca), sub:'Liquidación planta (finca)', cls: ingresoFinca>0?'highlight':'' },
+        { label:'Ingreso total finca', value:fmt.money(ingresoFinca), sub:`Iteranza ${fmt.money(ingresoIteranza)} + directa ${fmt.money(ingresoDirecto)}`, cls: ingresoFinca>0?'highlight':'' },
         { label:'Costos totales',      value:fmt.money(tot.costoTotal), sub:'Gastos + labores + nómina', cls:'warn' },
         { label:'Margen finca',        value:fmt.money(margenFinca),  sub: ingresoFinca>0 ? (margenFinca/ingresoFinca*100).toFixed(1)+'% de rentabilidad' : '—', cls: margenFinca>=0?'highlight':'danger' },
         { label:'Kg recibidos planta', value:fmt.num(Math.round(kgPlantaFinca))+' kg', sub: anioFiltro==='Todos'?'Total histórico':`En ${anioFiltro}`, cls:'' },
@@ -8355,7 +8433,9 @@ function _aiConstruirContexto() {
     // Totales financieros
     const totalCosechaGav     = cosechas.reduce((s,c) => s + (parseInt(c.gavetas)||0), 0);     // producción de campo (gavetas)
     const totalKgPlanta       = poscosecha.reduce((s,p) => s + (parseFloat(p.kgRecibidos)||0), 0);
-    const totalIngresoReal    = poscosecha.reduce((s,p) => s + (parseFloat(p.valorFacturado)||0), 0); // ingreso real (liquidación)
+    const ingresoIteranzaAI   = poscosecha.reduce((s,p) => s + (parseFloat(p.valorFacturado)||0), 0); // liquidación Iteranza
+    const ingresoDirectoAI    = entregas.filter(e => e.tipoSalida === 'venta_directa').reduce((s,e) => s + (parseFloat(e.valorTotal)||0), 0); // ventas directas
+    const totalIngresoReal    = ingresoIteranzaAI + ingresoDirectoAI;                          // ingreso real total
     const totalGastos         = gastos.reduce((s,g) => s + (parseFloat(g.monto)||0), 0);
     const totalJornadas       = jornadas.reduce((s,j) => s + (parseFloat(j.costo)||0), 0);
     const rentabilidadNeta    = totalIngresoReal - totalGastos - totalJornadas;
@@ -8365,7 +8445,7 @@ function _aiConstruirContexto() {
 
     // ── RESUMEN FINANCIERO (últimos 90 días) ──
     ctx += 'RESUMEN FINANCIERO (últimos 90 días):\n';
-    ctx += '  Ingreso real (liquidación pos-cosecha): $' + totalIngresoReal.toFixed(2) + '\n';
+    ctx += '  Ingreso real total: $' + totalIngresoReal.toFixed(2) + ' (Iteranza/liquidación $' + ingresoIteranzaAI.toFixed(2) + ' + ventas directas $' + ingresoDirectoAI.toFixed(2) + ')\n';
     ctx += '  Gastos registrados: $' + totalGastos.toFixed(2) + '\n';
     ctx += '  Costo jornadas: $' + totalJornadas.toFixed(2) + '\n';
     ctx += '  Rentabilidad neta estimada: $' + rentabilidadNeta.toFixed(2) + '\n';
@@ -8442,23 +8522,26 @@ function _aiConstruirContexto() {
         ctx += '\n';
     });
 
-    // ── ENTREGAS A PLANTA ──
+    // ── ENTREGAS / SALIDAS (dos canales: Iteranza vs venta directa) ──
+    const kgIteranzaAI = entregas.filter(e => e.tipoSalida !== 'venta_directa').reduce((s,e) => s + (parseFloat(e.kg)||0), 0);
     const totalEnviado = entregas.reduce((s,e) => s + (parseFloat(e.kg)||0), 0);
-    ctx += '\nENTREGAS A PLANTA últimos 90 días (' + entregas.length + ' guías) — ' + totalEnviado.toFixed(0) + ' kg enviados:\n';
-    if (!entregas.length) ctx += '  (sin entregas registradas)\n';
+    ctx += '\nSALIDAS DE FRUTA últimos 90 días (' + entregas.length + ' guías) — ' + totalEnviado.toFixed(0) + ' kg (Iteranza ' + kgIteranzaAI.toFixed(0) + ', venta directa ' + (totalEnviado-kgIteranzaAI).toFixed(0) + '):\n';
+    if (!entregas.length) ctx += '  (sin salidas registradas)\n';
     entregas.slice(0,12).forEach(e => {
         const det = Array.isArray(e.lotesDetalle) ? e.lotesDetalle : [];
         const lotesTxt = det.length ? det.map(l => l.lote).join('+') : (e.loteHacienda || '?');
         const parcelasTxt = det.length ? [...new Set(det.map(l => l.parcela).filter(Boolean))].join(', ') : (e.parcela||'');
-        ctx += '  ' + (e.fecha||'') + ': lotes ' + lotesTxt + ' — ' + (parseFloat(e.kg)||0).toFixed(0) + ' kg';
+        const dir = e.tipoSalida === 'venta_directa';
+        ctx += '  ' + (e.fecha||'') + ' [' + (dir?'VENTA DIRECTA':'Iteranza') + ']: lotes ' + lotesTxt + ' — ' + (parseFloat(e.kg)||0).toFixed(0) + ' kg';
         if (parcelasTxt)    ctx += ' de ' + parcelasTxt;
         if (e.destino)      ctx += ' → ' + e.destino;
-        if (e.loteIteranza) ctx += ' (lote planta: ' + e.loteIteranza + ')';
+        if (dir)            ctx += ' · VENTA $' + (parseFloat(e.valorTotal)||0).toFixed(2) + (e.precioKg ? ' ($'+(+e.precioKg).toFixed(2)+'/kg)' : '');
+        else if (e.loteIteranza) ctx += ' (lote planta: ' + e.loteIteranza + ')';
         ctx += '\n';
     });
-    if (entregas.length && totalKgPlanta > 0) {
-        const merma = totalEnviado - totalKgPlanta;
-        ctx += '  MERMA campo→planta: ' + merma.toFixed(0) + ' kg (' + (totalEnviado>0?(merma/totalEnviado*100).toFixed(1):'0') + '% del enviado)\n';
+    if (kgIteranzaAI > 0 && totalKgPlanta > 0) {
+        const merma = kgIteranzaAI - totalKgPlanta;
+        ctx += '  MERMA campo→planta (solo Iteranza): ' + merma.toFixed(0) + ' kg (' + (kgIteranzaAI>0?(merma/kgIteranzaAI*100).toFixed(1):'0') + '%)\n';
     }
 
     // ── POS-COSECHA (planta / Iteranza) ──
