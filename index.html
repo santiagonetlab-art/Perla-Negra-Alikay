@@ -951,11 +951,11 @@
                         <tr>
                             <th>Fecha</th>
                             <th>Parcela</th>
+                            <th>Gavetas</th>
                             <th>Kg Cosechados</th>
-                            <th>Precio / Kg</th>
-                            <th>Total</th>
-                            <th>Comprador</th>
-                            <th>Calidad</th>
+                            <th>Desecho (kg)</th>
+                            <th>Desecho (gav)</th>
+                            <th>% Desecho</th>
                             <th>Notas</th>
                             <th></th>
                         </tr>
@@ -2228,7 +2228,10 @@
 <!-- MODAL COSECHA -->
 <div class="modal-overlay" id="modal-cosecha">
     <div class="modal">
-        <h3>🧺 Registrar Cosecha</h3>
+        <h3>🧺 Registrar Cosecha de Campo</h3>
+        <p style="font-size:.8rem;color:var(--muted);margin:-4px 0 12px">
+            Solo lo que se sabe en el campo. El precio y la calidad de exportación se registran después en Pos-cosecha.
+        </p>
         <div class="form-row">
             <div class="form-group">
                 <label>Fecha *</label>
@@ -2241,28 +2244,25 @@
         </div>
         <div class="form-row">
             <div class="form-group">
-                <label>Kg Cosechados *</label>
+                <label>Gavetas cosechadas</label>
+                <input type="number" id="c-gavetas" placeholder="40" step="1" min="0">
+            </div>
+            <div class="form-group">
+                <label>Kg Cosechados (útil) *</label>
                 <input type="number" id="c-kg" placeholder="500" step="0.1" min="0">
             </div>
-            <div class="form-group">
-                <label>Precio por Kg ($)</label>
-                <input type="number" id="c-precio" placeholder="1.50" step="0.01" min="0">
-            </div>
         </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>Comprador / Destino</label>
-                <input type="text" id="c-comprador" placeholder="Nombre del comprador">
-            </div>
-            <div class="form-group">
-                <label>Calidad</label>
-                <select id="c-calidad">
-                    <option value="">— Seleccionar —</option>
-                    <option>Extra</option>
-                    <option>Primera</option>
-                    <option>Segunda</option>
-                    <option>Rezaga</option>
-                </select>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px">
+            <div style="font-size:.75rem;font-weight:700;color:var(--primary);margin-bottom:10px;text-transform:uppercase;letter-spacing:.6px">Desecho en hacienda (fruta que se descarta en el campo)</div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Desecho (kg)</label>
+                    <input type="number" id="c-desecho-kg" placeholder="30" step="0.1" min="0">
+                </div>
+                <div class="form-group">
+                    <label>Desecho (gavetas)</label>
+                    <input type="number" id="c-desecho-gav" placeholder="2" step="1" min="0">
+                </div>
             </div>
         </div>
         <div class="form-group">
@@ -3127,13 +3127,13 @@ function saveCosecha() {
     const kg = numVal('c-kg');
     if (!kg) return alert('Ingresa la cantidad de kg cosechados.');
     DB.add('cosechas', {
-        fecha:     val('c-fecha'),
-        parcela:   val('c-parcela'),
+        fecha:          val('c-fecha'),
+        parcela:        val('c-parcela'),
+        gavetas:        parseInt(val('c-gavetas')) || 0,
         kg,
-        precio:    numVal('c-precio'),
-        comprador: val('c-comprador'),
-        calidad:   val('c-calidad'),
-        notas:     val('c-notas')
+        desechoKg:      numVal('c-desecho-kg'),
+        desechoGavetas: parseInt(val('c-desecho-gav')) || 0,
+        notas:          val('c-notas')
     });
     closeModal('modal-cosecha');
     render();
@@ -3785,10 +3785,10 @@ function renderDashboard() {
         ? rc.map(c => `
             <div class="list-row">
                 <div>
-                    <div class="lr-title">${c.parcela} · ${fmt.kg(c.kg)}</div>
-                    <div class="lr-sub">${fmt.date(c.fecha)}${c.comprador ? ' · ' + c.comprador : ''}</div>
+                    <div class="lr-title">${c.parcela || 'Cosecha'}</div>
+                    <div class="lr-sub">${fmt.date(c.fecha)}${c.gavetas ? ' · ' + c.gavetas + ' gavetas' : ''}</div>
                 </div>
-                <div class="lr-val">${fmt.money((c.kg||0)*(c.precio||0))}</div>
+                <div class="lr-val">${fmt.kg(c.kg)}</div>
             </div>`).join('')
         : '<div class="empty-state"><div class="e-icon">🧺</div><p>Sin cosechas aún</p></div>';
 
@@ -3851,30 +3851,34 @@ function renderCosechas() {
         tbody.innerHTML = emptyRow(9, '🧺', 'No hay cosechas registradas.');
         return;
     }
-    const totalKg  = data.reduce((s,c) => s + (parseFloat(c.kg)||0), 0);
-    const totalVal = data.reduce((s,c) => s + (parseFloat(c.kg)||0)*(parseFloat(c.precio)||0), 0);
-    tbody.innerHTML = data.map(c => {
-        const total = (parseFloat(c.kg)||0) * (parseFloat(c.precio)||0);
-        const precioDisplay = c.precio
-            ? '$' + parseFloat(c.precio).toLocaleString('es', {minimumFractionDigits:2, maximumFractionDigits:4})
-            : '—';
+    const totalKg   = data.reduce((s,c) => s + (parseFloat(c.kg)||0), 0);
+    const totalGav  = data.reduce((s,c) => s + (parseInt(c.gavetas)||0), 0);
+    const totalDesKg  = data.reduce((s,c) => s + (parseFloat(c.desechoKg)||0), 0);
+    const totalDesGav = data.reduce((s,c) => s + (parseInt(c.desechoGavetas)||0), 0);
+    const pctDesTot = (totalKg + totalDesKg) > 0 ? (totalDesKg / (totalKg + totalDesKg) * 100) : 0;
+    const ordenado = [...data].sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''));
+    tbody.innerHTML = ordenado.map(c => {
+        const kg = parseFloat(c.kg)||0, desKg = parseFloat(c.desechoKg)||0;
+        const pctDes = (kg + desKg) > 0 ? (desKg / (kg + desKg) * 100) : null;
         return `<tr>
             <td style="white-space:nowrap">${fmt.date(c.fecha)}</td>
-            <td>${c.parcela}</td>
+            <td>${c.parcela || '—'}</td>
+            <td>${c.gavetas ? c.gavetas : '—'}</td>
             <td><strong>${fmt.kg(c.kg)}</strong></td>
-            <td>${precioDisplay}</td>
-            <td><strong style="color:var(--primary)">${fmt.money(total)}</strong></td>
-            <td>${c.comprador || '—'}</td>
-            <td>${c.calidad ? `<span class="badge badge-green">${c.calidad}</span>` : '—'}</td>
+            <td>${desKg ? fmt.kg(desKg) : '—'}</td>
+            <td>${c.desechoGavetas ? c.desechoGavetas : '—'}</td>
+            <td>${pctDes != null && desKg ? `<span class="badge ${pctDes>15?'badge-yellow':'badge-green'}">${pctDes.toFixed(1)}%</span>` : '—'}</td>
             <td style="max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${c.notas||''}">${c.notas || '—'}</td>
             <td><button class="btn btn-danger-ghost" onclick="del('cosechas', ${c.id})">✕</button></td>
         </tr>`;
     }).join('') + `<tr style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
         <td colspan="2" style="padding:10px 12px">TOTAL</td>
+        <td>${totalGav || '—'}</td>
         <td>${fmt.kg(totalKg)}</td>
-        <td>—</td>
-        <td style="color:var(--primary)">${fmt.money(totalVal)}</td>
-        <td colspan="4"></td>
+        <td>${totalDesKg ? fmt.kg(totalDesKg) : '—'}</td>
+        <td>${totalDesGav || '—'}</td>
+        <td>${totalDesKg ? pctDesTot.toFixed(1) + '%' : '—'}</td>
+        <td colspan="2"></td>
     </tr>`;
 }
 
@@ -8148,7 +8152,7 @@ function _aiResumenAccion(accion) {
     switch (accion.tipo) {
         case 'add_labor':      return (d.fecha||'') + ' · ' + (d.tipo||'') + ' en ' + (d.parcela||'') + '\n' + (d.descripcion||'') + '\nCosto: $' + (d.costo||0) + ' · ' + (d.estado||'');
         case 'add_gasto':      return (d.fecha||'') + ' · ' + (d.categoria||'') + '\n' + (d.descripcion||'') + '\nMonto: $' + (d.monto||0) + (d.parcela ? ' · ' + d.parcela : '');
-        case 'add_cosecha':    return (d.fecha||'') + ' · ' + (d.parcela||'') + '\n' + (d.kg||0) + 'kg a $' + (d.precio||0) + '/kg · ' + (d.calidad||'') + (d.comprador ? '\nComprador: ' + d.comprador : '');
+        case 'add_cosecha':    return (d.fecha||'') + ' · ' + (d.parcela||'') + '\n' + (d.kg||0) + ' kg útiles' + (d.gavetas ? ' · ' + d.gavetas + ' gavetas' : '') + ((parseFloat(d.desechoKg)||0) ? '\nDesecho: ' + d.desechoKg + ' kg' + (d.desechoGavetas ? '/' + d.desechoGavetas + ' gav' : '') : '');
         case 'add_observacion':return (d.fechaISO||d.fecha||'') + ' · ' + (d.parcelaNombre||'') + '\n' + (d.descripcion||'') + (d.severidad ? '\nSeveridad: ' + d.severidad : '');
         case 'add_insumo':     return (d.nombre||'') + ' (' + (d.categoria||'') + ')\nStock: ' + (d.stock||0) + ' ' + (d.unidad||'') + (d.precio ? ' · $' + d.precio : '');
         default:               return JSON.stringify(d);
@@ -8176,9 +8180,10 @@ function aiEjecutarAccion(idx) {
                 break;
             case 'add_cosecha':
                 DB.add('cosechas', {
-                    fecha: d.fecha||'', parcela: d.parcela||'', kg: parseFloat(d.kg)||0,
-                    precio: parseFloat(d.precio)||0, comprador: d.comprador||'',
-                    calidad: d.calidad||'', notas: d.notas||''
+                    fecha: d.fecha||'', parcela: d.parcela||'',
+                    gavetas: parseInt(d.gavetas)||0, kg: parseFloat(d.kg)||0,
+                    desechoKg: parseFloat(d.desechoKg)||0, desechoGavetas: parseInt(d.desechoGavetas)||0,
+                    notas: d.notas||''
                 });
                 break;
             case 'add_observacion':
@@ -8302,11 +8307,16 @@ function _aiConstruirContexto() {
     }
 
     // ── COSECHAS ──
-    ctx += '\nCOSECHA DE CAMPO últimos 90 días (' + cosechas.length + ' registros) — ' + totalCosechaKg.toFixed(0) + ' kg bajados del árbol:\n';
+    ctx += '\nCOSECHA DE CAMPO últimos 90 días (' + cosechas.length + ' registros) — ' + totalCosechaKg.toFixed(0) + ' kg útiles bajados del árbol:\n';
     if (!cosechas.length) ctx += '  (sin registros de cosecha de campo)\n';
     cosechas.slice(0,12).forEach(c => {
-        ctx += '  ' + (c.fechaISO||c.fecha||'') + ': ' + (c.parcela||'') + ' — ' + (c.kg||0) + ' kg, calidad ' + (c.calidad||'?');
-        if (c.comprador) ctx += ', comprador: ' + c.comprador;
+        ctx += '  ' + (c.fechaISO||c.fecha||'') + ': ' + (c.parcela||'') + ' — ' + (c.kg||0) + ' kg útiles';
+        if (c.gavetas)   ctx += ', ' + c.gavetas + ' gavetas';
+        const desKg = parseFloat(c.desechoKg)||0;
+        if (desKg) {
+            const pct = ((parseFloat(c.kg)||0)+desKg) > 0 ? (desKg/((parseFloat(c.kg)||0)+desKg)*100).toFixed(1) : '0';
+            ctx += ', desecho ' + desKg + ' kg' + (c.desechoGavetas ? '/' + c.desechoGavetas + ' gav' : '') + ' (' + pct + '%)';
+        }
         if (c.notas)     ctx += ' (' + c.notas + ')';
         ctx += '\n';
     });
@@ -8469,7 +8479,7 @@ async function enviarMensajeIA() {
         '[[ACCIÓN:{"tipo":"add_labor","datos":{"fecha":"YYYY-MM-DD","tipo":"Fumigación","parcela":"NombreParcela","descripcion":"detalle","trabajadores":2,"costo":50,"estado":"completado"}}]]\n\n' +
         'Acciones disponibles y campos:\n' +
         'add_gasto     → {fecha, categoria, descripcion, monto, parcela}\n' +
-        'add_cosecha   → {fecha, parcela, kg, precio, comprador, calidad}\n' +
+        'add_cosecha   → {fecha, parcela, gavetas, kg, desechoKg, desechoGavetas}  (kg = útil bajado del árbol; precio y calidad NO se conocen en cosecha, van en pos-cosecha)\n' +
         'add_observacion → {fecha, fechaISO, parcelaNombre, descripcion, severidad}\n' +
         'add_insumo    → {nombre, categoria, stock, unidad, precio}\n\n' +
         'REGLAS:\n' +
