@@ -2278,28 +2278,26 @@
         <p style="font-size:.8rem;color:var(--muted);margin:-4px 0 12px">
             Marca los <strong>lotes de cosecha</strong> que van en esta guía (de una o varias parcelas). El peso en kg se registra aquí.
         </p>
+        <div class="form-group" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:14px">
+            <label style="color:var(--primary);font-weight:700">Tipo de salida *</label>
+            <select id="e-tipo" onchange="_toggleTipoEntrega()" style="font-weight:600">
+                <option value="iteranza">🏭 Iteranza — el valor ($) llega después en Pos-cosecha</option>
+                <option value="venta_directa">🤝 Venta directa — registras el precio/kg aquí mismo</option>
+            </select>
+        </div>
         <div class="form-row">
             <div class="form-group">
                 <label>Fecha de salida *</label>
                 <input type="date" id="e-fecha">
             </div>
             <div class="form-group">
-                <label>Tipo de salida *</label>
-                <select id="e-tipo" onchange="_toggleTipoEntrega()">
-                    <option value="iteranza">🏭 Iteranza (liquida después)</option>
-                    <option value="venta_directa">🤝 Venta directa (final aquí)</option>
-                </select>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>Nº Guía de remisión</label>
-                <input type="text" id="e-guia" placeholder="001-001-000012345">
-            </div>
-            <div class="form-group">
                 <label id="e-destino-label">Comprador / Destino</label>
                 <input type="text" id="e-destino" placeholder="Iteranza / Durexporta" value="Iteranza">
             </div>
+        </div>
+        <div class="form-group">
+            <label>Nº Guía de remisión</label>
+            <input type="text" id="e-guia" placeholder="001-001-000012345">
         </div>
         <div class="form-group">
             <label>Lotes de cosecha a despachar *</label>
