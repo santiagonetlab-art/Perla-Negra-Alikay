@@ -2803,7 +2803,9 @@ const DB = {
         return item;
     },
 
-    // Reemplaza la colección completa (upsert + borra eliminados)
+    // Reemplaza la colección completa (upsert + borra eliminados).
+    // Solo para operaciones MASIVAS (migraciones, sembradores, limpieza que borra).
+    // Para editar UN registro usar DB.update (evita reescribir toda la colección).
     set: (k, arr) => {
         if (!Array.isArray(arr)) return;
         const oldIds = new Set((_cache[k] || []).map(i => String(i.id)));
@@ -2816,6 +2818,20 @@ const DB = {
             oldIds.forEach(id => { if (!newIds.has(id)) batch.delete(_fdb.collection(k).doc(id)); });
             batch.commit().catch(e => console.error('Firestore set error:', k, e));
         } catch(e) { console.error('Firestore set error:', k, e); }
+    },
+
+    // Actualiza UN documento (merge de los campos dados) — escribe solo ese doc,
+    // sin reescribir la colección. Preserva id y campos no incluidos.
+    update: (k, id, campos) => {
+        const payload = { ...campos, _ts: new Date().toISOString() };
+        const arr = _cache[k];
+        if (arr) {
+            const idx = arr.findIndex(i => String(i.id) === String(id));
+            if (idx >= 0) arr[idx] = { ...arr[idx], ...payload };
+        }
+        if (!_appReady) return; // durante init, solo actualizar cache
+        _fdb.collection(k).doc(String(id)).set(_toFS(payload), { merge: true })
+            .catch(e => console.error('Firestore update error:', k, e));
     },
 
     remove: (k, id) => {
@@ -3174,13 +3190,8 @@ function saveCosecha() {
         desechoGavetas: parseInt(val('c-desecho-gav')) || 0, // a abono orgánico
         notas:          val('c-notas')
     };
-    if (editId) {
-        const arr = DB.get('cosechas');
-        const idx = arr.findIndex(x => String(x.id) === String(editId));
-        if (idx >= 0) { arr[idx] = { ...arr[idx], ...campos }; DB.set('cosechas', arr); }
-    } else {
-        DB.add('cosechas', campos);
-    }
+    if (editId) DB.update('cosechas', editId, campos);
+    else        DB.add('cosechas', campos);
     closeModal('modal-cosecha');
     render();
 }
@@ -3727,6 +3738,31 @@ function emptyRow(cols, icon, msg) {
     </td></tr>`;
 }
 
+// ─── INGRESOS — regla única (dos canales) ──────────────────
+// Fuente única de verdad del ingreso: liquidación Iteranza (poscosecha.valorFacturado)
+// + ventas directas (entregas con tipoSalida 'venta_directa', su valorTotal).
+// Cada pantalla pasa sus arreglos YA filtrados por período — así los totales no cambian.
+function ingresoEventos(poscosechaArr, entregasArr) {
+    const ev = [];
+    (poscosechaArr || []).forEach(p => {
+        const m = parseFloat(p.valorFacturado) || 0;
+        if (m) ev.push({ fecha: p.fecha || '', monto: m, fuente: 'iteranza' });
+    });
+    (entregasArr || []).forEach(e => {
+        if (e.tipoSalida !== 'venta_directa') return;
+        const m = parseFloat(e.valorTotal) || 0;
+        if (m) ev.push({ fecha: e.fecha || '', monto: m, fuente: 'directa' });
+    });
+    return ev;
+}
+function ingresoTotales(poscosechaArr, entregasArr) {
+    let iteranza = 0, directa = 0;
+    ingresoEventos(poscosechaArr, entregasArr).forEach(e => {
+        if (e.fuente === 'iteranza') iteranza += e.monto; else directa += e.monto;
+    });
+    return { iteranza, directa, total: iteranza + directa };
+}
+
 // ─── RENDER ────────────────────────────────────────────────
 function render() {
     renderDashboard();
@@ -3753,9 +3789,8 @@ function renderDashboard() {
     const totalGavetas  = cosechas.reduce((s, c) => s + (parseInt(c.gavetas)||0), 0);          // producción de campo (gavetas)
     const totalGavEnvio = cosechas.reduce((s, c) => s + Math.max(0,(parseInt(c.gavetas)||0)-(parseInt(c.desechoGavetas)||0)), 0);
     const totalKgPlanta = poscosecha.reduce((s, p) => s + (parseFloat(p.kgRecibidos)||0), 0); // recibido en planta
-    const ingresoIteranza = poscosecha.reduce((s, p) => s + (parseFloat(p.valorFacturado)||0), 0);  // liquidación Iteranza
-    const ingresoDirecto  = DB.get('entregas').filter(e => e.tipoSalida === 'venta_directa').reduce((s, e) => s + (parseFloat(e.valorTotal)||0), 0); // ventas directas
-    const totalIngresos = ingresoIteranza + ingresoDirecto;                                   // ingreso real total
+    const _ing = ingresoTotales(poscosecha, DB.get('entregas'));                              // ingreso real (regla única)
+    const ingresoIteranza = _ing.iteranza, ingresoDirecto = _ing.directa, totalIngresos = _ing.total;
     const totalGastos   = gastos.reduce((s, g) => s + (g.monto || 0), 0);
     const totalLabCosto = labores.reduce((s, l) => s + (l.costo || 0), 0);
     const pendientes    = labores.filter(l => l.estado === 'Pendiente').length;
@@ -4279,13 +4314,8 @@ function saveEntrega() {
         destino:      val('e-destino') || (esDir ? 'Comprador' : 'Iteranza'),
         notas:        val('e-notas')
     };
-    if (editId) {
-        const arr = DB.get('entregas');
-        const idx = arr.findIndex(x => String(x.id) === String(editId));
-        if (idx >= 0) { arr[idx] = { ...arr[idx], ...campos }; DB.set('entregas', arr); }
-    } else {
-        DB.add('entregas', campos);
-    }
+    if (editId) DB.update('entregas', editId, campos);
+    else        DB.add('entregas', campos);
     closeModal('modal-entrega');
     render(); // re-render cosechas (estado despachado) + entregas
 }
@@ -4474,11 +4504,10 @@ function renderGraficas() {
     const kgMes = Array(12).fill(0);
     cosAño.forEach(c => { const m = parseInt(c.fecha?.slice(5,7)) - 1; if (m >= 0) kgMes[m] += (parseInt(c.gavetas) || 0); });
 
-    // ingresos por mes — liquidación Iteranza (pos-cosecha) + ventas directas (entregas)
+    // ingresos por mes — regla única (Iteranza + ventas directas), agrupada por mes
     const ingMes = Array(12).fill(0);
-    posAño.forEach(p => { const m = parseInt((p.fecha||'').slice(5,7)) - 1; if (m >= 0) ingMes[m] += (parseFloat(p.valorFacturado)||0); });
-    DB.get('entregas').filter(e => e.tipoSalida === 'venta_directa' && (e.fecha||'').startsWith(selectedYear))
-        .forEach(e => { const m = parseInt((e.fecha||'').slice(5,7)) - 1; if (m >= 0) ingMes[m] += (parseFloat(e.valorTotal)||0); });
+    const entAño = DB.get('entregas').filter(e => (e.fecha||'').startsWith(selectedYear));
+    ingresoEventos(posAño, entAño).forEach(ev => { const m = parseInt((ev.fecha||'').slice(5,7)) - 1; if (m >= 0) ingMes[m] += ev.monto; });
 
     // gastos por mes
     const gasMes = Array(12).fill(0);
@@ -4910,19 +4939,18 @@ function confirmarTodo() {
                 notas:     `Creado automáticamente desde factura ${gasto.comprobante || ''}`.trim()
             });
         } else {
-            const all = DB.get('insumos');
-            const idx = all.findIndex(x => x.id === a.id);
-            if (idx !== -1) {
-                all[idx].stock = (all[idx].stock || 0) + (a.stockAgregar || 0);
-                if (a.precio) all[idx].precio = a.precio;
-                DB.set('insumos', all);
+            const ins = DB.get('insumos').find(x => x.id === a.id);
+            if (ins) {
+                const campos = { stock: (ins.stock || 0) + (a.stockAgregar || 0) };
+                if (a.precio) campos.precio = a.precio;
+                DB.update('insumos', a.id, campos);
             }
         }
     });
 
     // 3. Marcar factura como guardada
     const history = DB.get('facturas_scan');
-    if (history.length) { history[0].guardado = true; DB.set('facturas_scan', history); }
+    if (history.length) DB.update('facturas_scan', history[0].id, { guardado: true });
 
     renderFacturasHistory();
     render();
@@ -5980,9 +6008,7 @@ function guardarEdicionParcela() {
     const nombre = document.getElementById('p-nombre').value.trim();
     if (!nombre) return alert('El nombre de la parcela es obligatorio.');
 
-    const parcelas = DB.get('parcelas');
-    const idx = parcelas.findIndex(x => x.id === _editParcelaId);
-    if (idx === -1) return;
+    if (!DB.get('parcelas').some(x => x.id === _editParcelaId)) return;
 
     const lat      = parseFloat(document.getElementById('p-lat').value) || null;
     const lng      = parseFloat(document.getElementById('p-lng').value) || null;
@@ -5993,8 +6019,7 @@ function guardarEdicionParcela() {
         cLng = poligono.reduce((s,p) => s + p[1], 0) / poligono.length;
     }
 
-    parcelas[idx] = {
-        ...parcelas[idx],
+    DB.update('parcelas', _editParcelaId, {
         nombre,
         ha:       numVal('p-ha'),
         variedad: document.getElementById('p-variedad').value,
@@ -6003,8 +6028,7 @@ function guardarEdicionParcela() {
         estado:   document.getElementById('p-estado').value,
         notas:    document.getElementById('p-notas').value.trim(),
         lat: cLat, lng: cLng, poligono
-    };
-    DB.set('parcelas', parcelas);
+    });
 
     // Restaurar el modal a modo "nueva parcela"
     _resetModalParcela();
@@ -6678,13 +6702,8 @@ function saveIteranza() {
         comprador: 'INTERANZA / INTDEX',
         notas:     notasEx || ''
     };
-    if (editId) {
-        const arr = DB.get('poscosecha');
-        const idx = arr.findIndex(x => String(x.id) === String(editId));
-        if (idx >= 0) { arr[idx] = { ...arr[idx], ...campos }; DB.set('poscosecha', arr); }
-    } else {
-        DB.add('poscosecha', campos);
-    }
+    if (editId) DB.update('poscosecha', editId, campos);
+    else        DB.add('poscosecha', campos);
 
     closeModal('modal-iteranza');
     renderPoscosecha();
@@ -6885,10 +6904,9 @@ function renderRentabilidad() {
     const labFiltr = filtrar(labores);
     const jorFiltr = filtrar(jornadas);
 
-    // Ingreso real de la finca = liquidación Iteranza (pos-cosecha) + ventas directas (entregas)
-    const ingresoIteranza = posFiltr.reduce((s, p) => s + (parseFloat(p.valorFacturado)||0), 0);
-    const ingresoDirecto  = entFiltr.filter(e => e.tipoSalida === 'venta_directa').reduce((s, e) => s + (parseFloat(e.valorTotal)||0), 0);
-    const ingresoFinca  = ingresoIteranza + ingresoDirecto;
+    // Ingreso real de la finca = liquidación Iteranza + ventas directas (regla única)
+    const _ingR = ingresoTotales(posFiltr, entFiltr);
+    const ingresoIteranza = _ingR.iteranza, ingresoDirecto = _ingR.directa, ingresoFinca = _ingR.total;
     const kgPlantaFinca = posFiltr.reduce((s, p) => s + (parseFloat(p.kgRecibidos)||0), 0);
 
     // ── Costo nómina fija distribuida por ha sembradas ────────
@@ -7445,13 +7463,8 @@ function guardarTrabajador() {
             : document.getElementById('tw-estado-j').value,
     };
     const existId = document.getElementById('tw-id').value;
-    if (existId) {
-        const arr = DB.get('trabajadores');
-        const idx = arr.findIndex(x => String(x.id) === String(existId));
-        if (idx >= 0) { arr[idx] = { ...arr[idx], ...obj }; DB.set('trabajadores', arr); }
-    } else {
-        DB.add('trabajadores', obj);
-    }
+    if (existId) DB.update('trabajadores', existId, obj);
+    else         DB.add('trabajadores', obj);
     closeModal('modal-trabajador');
     renderTrabajadores();
 }
@@ -7669,11 +7682,8 @@ function guardarTratamiento() {
 }
 
 function actualizarResultadoTratamiento(id, resultado) {
-    const trats = DB.get('tratamientos');
-    const idx   = trats.findIndex(t => t.id === id);
-    if (idx === -1) return;
-    trats[idx].resultado = resultado;
-    DB.set('tratamientos', trats);
+    if (!DB.get('tratamientos').some(t => t.id === id)) return;
+    DB.update('tratamientos', id, { resultado });
     renderTratamientos();
 }
 
@@ -8543,9 +8553,8 @@ function _aiConstruirContexto() {
     // Totales financieros
     const totalCosechaGav     = cosechas.reduce((s,c) => s + (parseInt(c.gavetas)||0), 0);     // producción de campo (gavetas)
     const totalKgPlanta       = poscosecha.reduce((s,p) => s + (parseFloat(p.kgRecibidos)||0), 0);
-    const ingresoIteranzaAI   = poscosecha.reduce((s,p) => s + (parseFloat(p.valorFacturado)||0), 0); // liquidación Iteranza
-    const ingresoDirectoAI    = entregas.filter(e => e.tipoSalida === 'venta_directa').reduce((s,e) => s + (parseFloat(e.valorTotal)||0), 0); // ventas directas
-    const totalIngresoReal    = ingresoIteranzaAI + ingresoDirectoAI;                          // ingreso real total
+    const _ingAI = ingresoTotales(poscosecha, entregas);                                       // regla única
+    const ingresoIteranzaAI   = _ingAI.iteranza, ingresoDirectoAI = _ingAI.directa, totalIngresoReal = _ingAI.total;
     const totalGastos         = gastos.reduce((s,g) => s + (parseFloat(g.monto)||0), 0);
     const totalJornadas       = jornadas.reduce((s,j) => s + (parseFloat(j.costo)||0), 0);
     const rentabilidadNeta    = totalIngresoReal - totalGastos - totalJornadas;
@@ -8655,7 +8664,7 @@ function _aiConstruirContexto() {
     }
 
     // ── POS-COSECHA (planta / Iteranza) ──
-    ctx += '\nPOS-COSECHA / PLANTA últimos 90 días (' + poscosecha.length + ' informes) — ' + totalKgPlanta.toFixed(0) + ' kg recibidos · $' + totalIngresoReal.toFixed(2) + ' facturado:\n';
+    ctx += '\nPOS-COSECHA / PLANTA últimos 90 días (' + poscosecha.length + ' informes) — ' + totalKgPlanta.toFixed(0) + ' kg recibidos · $' + ingresoIteranzaAI.toFixed(2) + ' facturado por Iteranza:\n';
     if (!poscosecha.length) ctx += '  (sin informes de pos-cosecha)\n';
     poscosecha.slice(0,12).forEach(p => {
         const pct = p.pctExport != null ? p.pctExport : ((parseFloat(p.kgRecibidos)||0) > 0 ? Math.round((parseFloat(p.kgExport)||0)/p.kgRecibidos*100) : 0);
