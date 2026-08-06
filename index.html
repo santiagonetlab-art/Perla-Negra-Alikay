@@ -3763,6 +3763,118 @@ function ingresoTotales(poscosechaArr, entregasArr) {
     return { iteranza, directa, total: iteranza + directa };
 }
 
+// ─── COSTOS / NÓMINA / RENTABILIDAD — reglas únicas ────────
+// Componentes de costo (cada pantalla pasa el subconjunto que le corresponde).
+function calcularCostos({ gastos = [], labores = [], jornadas = [] } = {}) {
+    const g = gastos.reduce((s, x) => s + (parseFloat(x.monto) || 0), 0);
+    const l = labores.reduce((s, x) => s + (parseFloat(x.costo) || 0), 0);
+    const j = jornadas.reduce((s, x) => s + (parseFloat(x.costo) || 0), 0);
+    return { gastos: g, labores: l, jornadas: j, total: g + l + j };
+}
+
+// Nómina fija = costo real empleador de los trabajadores fijos activos.
+function calcularNomina(trabajadores) {
+    const fijos = (trabajadores || []).filter(t => t.tipo === 'fijo' && t.estado !== 'inactivo');
+    const costoMes = fijos.reduce((s, t) => s + calcularCostoEmpleador(t.salario, t.fechaIngreso).total, 0);
+    return { fijos, costoMes, costoAnual: costoMes * 12 };
+}
+
+// Rentabilidad por parcela + P&L de finca. Función PURA: recibe los arreglos
+// YA filtrados por período (cada pantalla filtra y llama). Devuelve datos para render/test.
+function calcularRentabilidad({ parcelas = [], cosechas = [], poscosecha = [], entregas = [],
+                                gastos = [], labores = [], jornadas = [], trabajadores = [] } = {}) {
+    const ESTADOS_ACTIVOS = ['Producción', 'Crecimiento'];
+    const nomina = calcularNomina(trabajadores);
+    const costoAnualFijo = nomina.costoAnual;
+    const totalHaSembradas = parcelas.filter(p => ESTADOS_ACTIVOS.includes(p.estado))
+        .reduce((s, p) => s + (parseFloat(p.ha) || 0), 0);
+    const ingreso = ingresoTotales(poscosecha, entregas);
+    const kgPlantaFinca = poscosecha.reduce((s, p) => s + (parseFloat(p.kgRecibidos) || 0), 0);
+
+    const datos = parcelas.map(p => {
+        const enParcela  = arr => arr.filter(x => x.parcela === p.nombre);
+        const kgTotal    = enParcela(cosechas).reduce((s, c) => s + (parseInt(c.gavetas) || 0), 0);
+        const gastosDir  = enParcela(gastos).reduce((s, g) => s + (parseFloat(g.monto) || 0), 0);
+        const costLabor  = enParcela(labores).reduce((s, l) => s + (parseFloat(l.costo) || 0), 0);
+        const costJorn   = enParcela(jornadas).reduce((s, j) => s + (parseFloat(j.costo) || 0), 0);
+        const ha         = parseFloat(p.ha) || 0;
+        const esActiva   = ESTADOS_ACTIVOS.includes(p.estado);
+        const costNomina = esActiva && totalHaSembradas > 0 ? costoAnualFijo * (ha / totalHaSembradas) : 0;
+        const haCalc     = ha || 1;
+        const arboles    = parseInt(p.arboles) || 1;
+        const costoTotal = gastosDir + costLabor + costJorn + costNomina;
+        return {
+            id: p.id, nombre: p.nombre, ha, arboles, variedad: p.variedad, estado: p.estado,
+            gastosDir, costLab: costLabor + costJorn, costNomina,
+            costoTotal, costoPorHa: costoTotal / haCalc,
+            kgTotal, kgPorHa: kgTotal / haCalc, kgPorArbol: kgTotal / arboles
+        };
+    });
+
+    const tot = datos.reduce((s, d) => ({
+        gastosDir:  s.gastosDir  + d.gastosDir,
+        costLab:    s.costLab    + d.costLab,
+        costNomina: s.costNomina + d.costNomina,
+        costoTotal: s.costoTotal + d.costoTotal,
+        kgTotal:    s.kgTotal    + d.kgTotal
+    }), { gastosDir:0, costLab:0, costNomina:0, costoTotal:0, kgTotal:0 });
+
+    return { datos, tot, ingreso, margenFinca: ingreso.total - tot.costoTotal,
+             costoMesFijo: nomina.costoMes, kgPlantaFinca, totalHaSembradas };
+}
+
+// ─── PRUEBAS DE CÁLCULO (regresión) ────────────────────────
+// Verifica las reglas puras con entradas fijas. Se corre sola al cargar (1 línea en consola).
+// Ejecutable a mano desde la consola: _selfTestCalculos()
+function _selfTestCalculos() {
+    const casos = [];
+    const check = (nombre, got, exp) => casos.push({ nombre, ok: Math.abs((got||0) - exp) < 0.005, got, exp });
+
+    // Ingresos: 2 liquidaciones Iteranza + 1 venta directa; la entrega Iteranza NO cuenta
+    const ing = ingresoTotales(
+        [{ valorFacturado: 8000 }, { valorFacturado: 7000 }],
+        [{ tipoSalida: 'venta_directa', valorTotal: 1500 }, { tipoSalida: 'iteranza', valorTotal: 0 }]
+    );
+    check('ingreso.iteranza', ing.iteranza, 15000);
+    check('ingreso.directa',  ing.directa,  1500);
+    check('ingreso.total',    ing.total,    16500);
+
+    // Costos por componente
+    const cost = calcularCostos({ gastos: [{ monto: 100 }, { monto: 50 }], labores: [{ costo: 30 }], jornadas: [{ costo: 20 }, { costo: 20 }] });
+    check('costos.total', cost.total, 220);
+
+    // Nómina: solo fijos activos cuentan
+    const nomRef = calcularCostoEmpleador(480, '2020-01-01').total;
+    const nom = calcularNomina([
+        { tipo: 'fijo', estado: 'activo', salario: 480, fechaIngreso: '2020-01-01' },
+        { tipo: 'jornalero', estado: 'activo', jornal: 20 },       // no cuenta
+        { tipo: 'fijo', estado: 'inactivo', salario: 480 }         // no cuenta
+    ]);
+    check('nomina.costoMes',   nom.costoMes,   nomRef);
+    check('nomina.costoAnual', nom.costoAnual, nomRef * 12);
+
+    // Rentabilidad: 1 parcela, sin nómina fija
+    const R = calcularRentabilidad({
+        parcelas:    [{ id: 1, nombre: 'P1', ha: 2, arboles: 100, estado: 'Producción' }],
+        cosechas:    [{ parcela: 'P1', gavetas: 40 }],
+        poscosecha:  [{ valorFacturado: 1000, kgRecibidos: 900 }],
+        entregas:    [{ tipoSalida: 'venta_directa', valorTotal: 200 }],
+        gastos:      [{ parcela: 'P1', monto: 100 }],
+        labores:     [{ parcela: 'P1', costo: 50 }],
+        jornadas:    [{ parcela: 'P1', costo: 30 }],
+        trabajadores: []
+    });
+    check('rent.ingreso',   R.ingreso.total,   1200);
+    check('rent.costoTotal', R.tot.costoTotal, 180);   // 100 + 50 + 30
+    check('rent.margen',    R.margenFinca,     1020);  // 1200 − 180
+    check('rent.gavetas',   R.tot.kgTotal,     40);
+
+    const fallan = casos.filter(c => !c.ok);
+    if (fallan.length) console.warn(`⚠️ Self-test cálculos: ${fallan.length}/${casos.length} FALLAN`, fallan);
+    else               console.log(`✓ Self-test cálculos: ${casos.length}/${casos.length} OK`);
+    return { total: casos.length, fallan: fallan.length, casos };
+}
+
 // ─── RENDER ────────────────────────────────────────────────
 function render() {
     renderDashboard();
@@ -3791,8 +3903,9 @@ function renderDashboard() {
     const totalKgPlanta = poscosecha.reduce((s, p) => s + (parseFloat(p.kgRecibidos)||0), 0); // recibido en planta
     const _ing = ingresoTotales(poscosecha, DB.get('entregas'));                              // ingreso real (regla única)
     const ingresoIteranza = _ing.iteranza, ingresoDirecto = _ing.directa, totalIngresos = _ing.total;
-    const totalGastos   = gastos.reduce((s, g) => s + (g.monto || 0), 0);
-    const totalLabCosto = labores.reduce((s, l) => s + (l.costo || 0), 0);
+    const _cost = calcularCostos({ gastos, labores });
+    const totalGastos   = _cost.gastos;
+    const totalLabCosto = _cost.labores;
     const pendientes    = labores.filter(l => l.estado === 'Pendiente').length;
     const utilidad      = totalIngresos - totalGastos - totalLabCosto;
 
@@ -6873,7 +6986,6 @@ function renderRentabilidad() {
     const gastos       = DB.get('gastos');
     const labores      = DB.get('labores');
     const jornadas     = DB.get('jornadas');
-    const trabajFijos  = DB.get('trabajadores').filter(t => t.tipo === 'fijo' && t.estado !== 'inactivo');
 
     // Selector de año
     const anioSel = document.getElementById('rent-anio');
@@ -6904,72 +7016,15 @@ function renderRentabilidad() {
     const labFiltr = filtrar(labores);
     const jorFiltr = filtrar(jornadas);
 
-    // Ingreso real de la finca = liquidación Iteranza + ventas directas (regla única)
-    const _ingR = ingresoTotales(posFiltr, entFiltr);
-    const ingresoIteranza = _ingR.iteranza, ingresoDirecto = _ingR.directa, ingresoFinca = _ingR.total;
-    const kgPlantaFinca = posFiltr.reduce((s, p) => s + (parseFloat(p.kgRecibidos)||0), 0);
-
-    // ── Costo nómina fija distribuida por ha sembradas ────────
-    // Solo parcelas activas con aguacate sembrado (excluye Inactivo)
-    const ESTADOS_ACTIVOS = ['Producción', 'Crecimiento'];
-    const parcelasActivas = parcelas.filter(p => ESTADOS_ACTIVOS.includes(p.estado));
-    const totalHaSembradas = parcelasActivas.reduce((s,p) => s + (parseFloat(p.ha)||0), 0);
-
-    const costoMesFijo = trabajFijos.reduce((s,t) =>
-        s + calcularCostoEmpleador(t.salario, t.fechaIngreso).total, 0);
-    const costoAnualFijo = costoMesFijo * 12;
-
-    // ── Calcular por parcela (costos + producción en gavetas; el ingreso es a nivel finca) ──
-    const datos = parcelas.map(p => {
-        const kgTotal   = cosFiltr
-            .filter(c => c.parcela === p.nombre)
-            .reduce((s, c) => s + (parseInt(c.gavetas)||0), 0);   // producción en gavetas
-
-        // Gastos directos a esta parcela
-        const gastosDir = gasFiltr
-            .filter(g => g.parcela === p.nombre)
-            .reduce((s, g) => s + (parseFloat(g.monto)||0), 0);
-
-        // Costo labores en esta parcela (módulo labores)
-        const costLab   = labFiltr
-            .filter(l => l.parcela === p.nombre)
-            .reduce((s, l) => s + (parseFloat(l.costo)||0), 0);
-
-        // Jornadas asignadas a esta parcela (módulo trabajadores)
-        const costJornadas = jorFiltr
-            .filter(j => j.parcela === p.nombre)
-            .reduce((s, j) => s + (j.costo||0), 0);
-
-        // Nómina fija: solo se proratea en parcelas activas con aguacate sembrado
-        const ha         = parseFloat(p.ha) || 0;
-        const esActiva   = ESTADOS_ACTIVOS.includes(p.estado);
-        const costNomina = esActiva && totalHaSembradas > 0
-            ? costoAnualFijo * (ha / totalHaSembradas)
-            : 0;
-
-        const haCalc    = ha || 1;
-        const arboles   = parseInt(p.arboles) || 1;
-        const costoTotal = gastosDir + costLab + costJornadas + costNomina;
-
-        return {
-            id: p.id, nombre: p.nombre,
-            ha, arboles, variedad: p.variedad, estado: p.estado,
-            gastosDir, costLab: costLab + costJornadas, costNomina,
-            costoTotal, costoPorHa: costoTotal / haCalc,
-            kgTotal, kgPorHa: kgTotal / haCalc, kgPorArbol: kgTotal / arboles
-        };
+    // Cálculo centralizado (regla única) — recibe los arreglos YA filtrados por año
+    const R = calcularRentabilidad({
+        parcelas, cosechas: cosFiltr, poscosecha: posFiltr, entregas: entFiltr,
+        gastos: gasFiltr, labores: labFiltr, jornadas: jorFiltr, trabajadores: DB.get('trabajadores')
     });
-
-    // ── Stats globales (P&L de la finca) ────────────────────
-    const tot = datos.reduce((s, d) => ({
-        gastosDir:  s.gastosDir  + d.gastosDir,
-        costLab:    s.costLab    + d.costLab,
-        costNomina: s.costNomina + d.costNomina,
-        costoTotal: s.costoTotal + d.costoTotal,
-        kgTotal:    s.kgTotal    + d.kgTotal
-    }), { gastosDir:0, costLab:0, costNomina:0, costoTotal:0, kgTotal:0 });
-
-    const margenFinca = ingresoFinca - tot.costoTotal;
+    const { datos, tot } = R;
+    const ingresoIteranza = R.ingreso.iteranza, ingresoDirecto = R.ingreso.directa, ingresoFinca = R.ingreso.total;
+    const margenFinca   = R.margenFinca;
+    const kgPlantaFinca = R.kgPlantaFinca;
 
     const statCards = [
         { label:'Ingreso total finca', value:fmt.money(ingresoFinca), sub:`Iteranza ${fmt.money(ingresoIteranza)} + directa ${fmt.money(ingresoDirecto)}`, cls: ingresoFinca>0?'highlight':'' },
@@ -7098,10 +7153,10 @@ function renderTrabajadores() {
     const trabajadores = DB.get('trabajadores');
 
     // Stats
-    const fijos      = trabajadores.filter(t => t.tipo === 'fijo' && t.estado !== 'inactivo');
+    const nom        = calcularNomina(trabajadores);
+    const fijos      = nom.fijos;
     const jornaleros = trabajadores.filter(t => t.tipo === 'jornalero' && t.estado !== 'inactivo');
-    const costoMes   = fijos.reduce((s, t) =>
-        s + calcularCostoEmpleador(t.salario, t.fechaIngreso).total, 0);
+    const costoMes   = nom.costoMes;
 
     document.getElementById('tw-stats').innerHTML = `
         <div class="stat-card highlight">
@@ -7215,9 +7270,7 @@ function renderCostosNomina() {
         return;
     }
 
-    const totalMes = trabajadores
-        .filter(t => t.estado !== 'inactivo')
-        .reduce((s,t) => s + calcularCostoEmpleador(t.salario, t.fechaIngreso).total, 0);
+    const totalMes = calcularNomina(trabajadores).costoMes;
 
     // Resumen de jornadas del mes actual
     const mesActual = new Date().toISOString().slice(0,7);
@@ -8869,6 +8922,9 @@ async function enviarMensajeIA() {
         input.focus();
     }
 }
+
+// Pruebas de cálculo al cargar (regresión) — 1 línea en consola, no afecta la UI
+try { _selfTestCalculos(); } catch(e) { console.warn('Self-test cálculos no pudo correr:', e); }
 </script>
 
 <!-- ═══ ASISTENTE IA — Botón flotante + Panel ════════════════════════ -->
