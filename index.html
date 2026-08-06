@@ -2132,7 +2132,8 @@
 <!-- MODAL ITERANZA / DUREXPORTA -->
 <div class="modal-overlay" id="modal-iteranza">
     <div class="modal" style="max-width:540px">
-        <h3>📋 Registrar Informe Iteranza / Durexporta</h3>
+        <h3 id="it-modal-titulo">📋 Registrar Informe Iteranza / Durexporta</h3>
+        <input type="hidden" id="it-id">
         <p style="font-size:.82rem;color:var(--muted);margin-bottom:14px">
             Ingresa los datos del resumen mensual del portal Durexporta o informe PDF Iteranza.
         </p>
@@ -2227,7 +2228,8 @@
 <!-- MODAL COSECHA -->
 <div class="modal-overlay" id="modal-cosecha">
     <div class="modal">
-        <h3>🧺 Registrar Cosecha de Campo</h3>
+        <h3 id="c-modal-titulo">🧺 Registrar Cosecha de Campo</h3>
+        <input type="hidden" id="c-id">
         <p style="font-size:.8rem;color:var(--muted);margin:-4px 0 12px">
             En finca se cuentan <strong>gavetas</strong> (no se pesa). El peso en kg se registra al entregar, en el módulo <strong>🚚 Entregas</strong>.
         </p>
@@ -2274,7 +2276,8 @@
 <!-- MODAL ENTREGA / SALIDA DE FRUTA -->
 <div class="modal-overlay" id="modal-entrega">
     <div class="modal">
-        <h3>🚚 Registrar Salida de Fruta</h3>
+        <h3 id="e-modal-titulo">🚚 Registrar Salida de Fruta</h3>
+        <input type="hidden" id="e-id">
         <p style="font-size:.8rem;color:var(--muted);margin:-4px 0 12px">
             Marca los <strong>lotes de cosecha</strong> que van en esta guía (de una o varias parcelas). El peso en kg se registra aquí.
         </p>
@@ -3156,19 +3159,28 @@ function _previewEnvioCosecha() {
 function saveCosecha() {
     const gavetas = parseInt(val('c-gavetas')) || 0;
     const lote    = val('c-lote');
+    const editId  = val('c-id');
     if (!gavetas) return alert('Ingresa las gavetas cosechadas.');
     if (!lote)    return alert('El lote de hacienda es obligatorio (es tu ancla de trazabilidad).');
-    if (DB.get('cosechas').some(c => (c.loteHacienda||'').toLowerCase() === lote.toLowerCase())) {
+    // Chequeo de lote duplicado, excluyendo el propio registro si se está editando
+    if (DB.get('cosechas').some(c => String(c.id) !== String(editId) && (c.loteHacienda||'').toLowerCase() === lote.toLowerCase())) {
         if (!confirm(`⚠️ Ya existe una cosecha con el lote "${lote}".\n¿Guardar de todas formas?`)) return;
     }
-    DB.add('cosechas', {
+    const campos = {
         fecha:          val('c-fecha'),
         parcela:        val('c-parcela'),
         loteHacienda:   lote,
         gavetas,                                            // total cosechado
         desechoGavetas: parseInt(val('c-desecho-gav')) || 0, // a abono orgánico
         notas:          val('c-notas')
-    });
+    };
+    if (editId) {
+        const arr = DB.get('cosechas');
+        const idx = arr.findIndex(x => String(x.id) === String(editId));
+        if (idx >= 0) { arr[idx] = { ...arr[idx], ...campos }; DB.set('cosechas', arr); }
+    } else {
+        DB.add('cosechas', campos);
+    }
     closeModal('modal-cosecha');
     render();
 }
@@ -3892,16 +3904,21 @@ function renderCosechas() {
     const totalDesGav = data.reduce((s,c) => s + (parseInt(c.desechoGavetas)||0), 0);
     const totalEnvio  = totalGav - totalDesGav;
     const pctDesTot   = totalGav > 0 ? (totalDesGav / totalGav * 100) : 0;
-    const despachados = _lotesDespachados();
+    const despGav = _gavetasDespachadasPorLote();
     const ordenado = [...data].sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''));
     tbody.innerHTML = ordenado.map(c => {
         const gav = parseInt(c.gavetas)||0, desGav = parseInt(c.desechoGavetas)||0;
         const envio = Math.max(0, gav - desGav);
         const pctDes = gav > 0 ? (desGav / gav * 100) : null;
-        const desp = c.loteHacienda && despachados.has(c.loteHacienda);
-        const loteCell = c.loteHacienda
-            ? `<strong>${c.loteHacienda}</strong>` + (desp ? `<br><span class="badge badge-blue" style="font-size:10px">🚚 despachado</span>` : `<br><span class="badge badge-yellow" style="font-size:10px">en finca</span>`)
-            : '—';
+        // Estado del lote según gavetas despachadas vs envío
+        const d = c.loteHacienda ? (despGav[c.loteHacienda] || 0) : 0;
+        let badge = '';
+        if (c.loteHacienda) {
+            if (d <= 0)            badge = '<br><span class="badge badge-yellow" style="font-size:10px">en finca</span>';
+            else if (d < envio)   badge = `<br><span class="badge badge-blue" style="font-size:10px">parcial (${d}/${envio} gav)</span>`;
+            else                  badge = '<br><span class="badge badge-blue" style="font-size:10px">🚚 despachado</span>';
+        }
+        const loteCell = c.loteHacienda ? `<strong>${c.loteHacienda}</strong>${badge}` : '—';
         return `<tr>
             <td style="white-space:nowrap">${fmt.date(c.fecha)}</td>
             <td style="white-space:nowrap">${loteCell}</td>
@@ -3911,7 +3928,7 @@ function renderCosechas() {
             <td>${envio || '—'}</td>
             <td>${pctDes != null && desGav ? `<span class="badge ${pctDes>15?'badge-yellow':'badge-green'}">${pctDes.toFixed(0)}%</span>` : '—'}</td>
             <td style="max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${c.notas||''}">${c.notas || '—'}</td>
-            <td><button class="btn btn-danger-ghost" onclick="del('cosechas', ${c.id})">✕</button></td>
+            <td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="openCosecha(${c.id})" title="Editar" style="margin-right:4px">✏️</button><button class="btn btn-danger-ghost" onclick="del('cosechas', ${c.id})">✕</button></td>
         </tr>`;
     }).join('') + `<tr style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
         <td colspan="3" style="padding:10px 12px">TOTAL</td>
@@ -3958,7 +3975,7 @@ function renderPoscosecha() {
             <td>$${precio.toLocaleString('es', {minimumFractionDigits:2, maximumFractionDigits:4})}</td>
             <td><strong style="color:var(--primary)">${fmt.money(p.valorFacturado)}</strong></td>
             <td style="max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${(p.idsLotes||'')+(p.notas?' · '+p.notas:'')}">${p.idsLotes ? 'Lotes: '+p.idsLotes : (p.notas||'—')}</td>
-            <td><button class="btn btn-danger-ghost" onclick="del('poscosecha', ${p.id})">✕</button></td>
+            <td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="openIteranza(${p.id})" title="Editar" style="margin-right:4px">✏️</button><button class="btn btn-danger-ghost" onclick="del('poscosecha', ${p.id})">✕</button></td>
         </tr>`;
     }).join('') + `<tr style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
         <td colspan="2" style="padding:10px 12px">TOTAL</td>
@@ -4064,37 +4081,55 @@ function _siguienteLoteHacienda() {
     return pref + String(sig).padStart(3, '0');
 }
 
-// Set de lotes ya despachados (referenciados por alguna entrega)
-function _lotesDespachados() {
-    const set = new Set();
+// Gavetas ya despachadas por lote (sumadas de todas las entregas).
+// exceptId: id de entrega a excluir (para editar sin contarse a sí misma).
+function _gavetasDespachadasPorLote(exceptId) {
+    const map = {};
     DB.get('entregas').forEach(e => {
+        if (exceptId && String(e.id) === String(exceptId)) return;
         (Array.isArray(e.lotesDetalle) ? e.lotesDetalle : []).forEach(l => {
-            if (l && l.lote) set.add(l.lote);
+            if (l && l.lote) map[l.lote] = (map[l.lote] || 0) + (parseInt(l.gavetas) || 0);
         });
     });
-    return set;
+    return map;
 }
 
-function openCosecha() {
+// Envío total de un lote de cosecha (gavetas − desecho)
+function _envioLote(c) {
+    return Math.max(0, (parseInt(c.gavetas)||0) - (parseInt(c.desechoGavetas)||0));
+}
+
+function openCosecha(id) {
+    const c = id ? DB.get('cosechas').find(x => String(x.id) === String(id)) : null;
     openModal('modal-cosecha');            // puebla c-parcela y muestra el modal
-    document.getElementById('c-fecha').value = todayISO();
-    document.getElementById('c-lote').value  = _siguienteLoteHacienda();
+    document.getElementById('c-modal-titulo').textContent = c ? '✏️ Editar Cosecha' : '🧺 Registrar Cosecha de Campo';
+    document.getElementById('c-id').value          = c ? c.id : '';
+    document.getElementById('c-fecha').value        = c?.fecha || todayISO();
+    document.getElementById('c-parcela').value      = c?.parcela || '';
+    document.getElementById('c-lote').value          = c?.loteHacienda || _siguienteLoteHacienda();
+    document.getElementById('c-gavetas').value       = c?.gavetas || '';
+    document.getElementById('c-desecho-gav').value   = c?.desechoGavetas || '';
+    document.getElementById('c-notas').value          = c?.notas || '';
+    _previewEnvioCosecha();
 }
 
-function openEntrega() {
+function openEntrega(id) {
+    const e = id ? DB.get('entregas').find(x => String(x.id) === String(id)) : null;
     openModal('modal-entrega');
-    document.getElementById('e-fecha').value         = todayISO();
-    document.getElementById('e-tipo').value          = 'iteranza';
-    document.getElementById('e-kg').value            = '';
-    document.getElementById('e-guia').value          = '';
-    document.getElementById('e-guia-iteranza').value = '';
-    document.getElementById('e-precio').value        = '';
-    document.getElementById('e-valor').value         = '';
-    document.getElementById('e-transporte').value    = '';
-    document.getElementById('e-destino').value       = 'Iteranza';
-    document.getElementById('e-notas').value         = '';
+    document.getElementById('e-modal-titulo').textContent = e ? '✏️ Editar Salida' : '🚚 Registrar Salida de Fruta';
+    document.getElementById('e-id').value            = e ? e.id : '';
+    document.getElementById('e-fecha').value         = e?.fecha || todayISO();
+    document.getElementById('e-tipo').value          = e?.tipoSalida || 'iteranza';
+    document.getElementById('e-kg').value            = e?.kg || '';
+    document.getElementById('e-guia').value          = e?.guia || '';
+    document.getElementById('e-guia-iteranza').value = e?.guiaIteranza || e?.loteIteranza || '';
+    document.getElementById('e-precio').value        = e?.precioKg || '';
+    document.getElementById('e-transporte').value    = e?.transporte || '';
+    document.getElementById('e-destino').value       = e?.destino || 'Iteranza';
+    document.getElementById('e-notas').value         = e?.notas || '';
     _toggleTipoEntrega();
-    _renderLotesChecklistEntrega();
+    document.getElementById('e-valor').value         = e?.valorTotal || ''; // tras el toggle, para no perder un total manual
+    _renderLotesChecklistEntrega(e);
     _recalcGavEntrega();
 }
 
@@ -4119,65 +4154,118 @@ function _recalcValorEntrega() {
     if (kg && precio) document.getElementById('e-valor').value = +(kg * precio).toFixed(2);
 }
 
-// Poblar el checklist con los lotes de cosecha disponibles (no despachados aún).
-// Cada lote muestra sus GAVETAS DE ENVÍO (total − desecho). El peso en kg se pone manual (pesaje al entregar).
-function _renderLotesChecklistEntrega() {
-    const cont = document.getElementById('e-lotes-checklist');
-    if (!cont) return;
-    const despachados = _lotesDespachados();
-    const disponibles = DB.get('cosechas')
-        .filter(c => c.loteHacienda && !despachados.has(c.loteHacienda))
-        .sort((a,b) => (a.fecha||'').localeCompare(b.fecha||''));
-
-    if (!disponibles.length) {
-        cont.innerHTML = '<p style="color:var(--muted);font-size:.82rem;padding:8px 10px;margin:0">No hay lotes de cosecha disponibles. Registra una cosecha primero (cada cosecha genera su lote).</p>';
-        return;
-    }
-    cont.innerHTML = disponibles.map(c => {
-        const envio = Math.max(0, (parseInt(c.gavetas)||0) - (parseInt(c.desechoGavetas)||0));
-        return `
-        <label style="display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:6px;cursor:pointer;font-size:.85rem">
-            <input type="checkbox" class="e-lote-chk" style="width:auto;margin:0"
-                   data-lote="${c.loteHacienda}" data-parcela="${(c.parcela||'').replace(/"/g,'&quot;')}"
-                   data-gav="${envio}" data-cid="${c.id}"
-                   onchange="_recalcGavEntrega()">
-            <span style="flex:1"><strong>${c.loteHacienda}</strong> · ${c.parcela||'—'}
-                <span style="color:var(--muted)">· ${fmt.date(c.fecha)} · ${envio} gav envío</span></span>
+// Fila del checklist de lotes — con entrada de gavetas a despachar (permite despacho parcial).
+// max = gavetas disponibles del lote para ESTA entrega; val = gavetas a despachar (default = max).
+function _chkRowEntrega(lote, parcela, cid, fechaTxt, max, val, checked) {
+    return `
+        <label style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;font-size:.85rem">
+            <input type="checkbox" class="e-lote-chk" style="width:auto;margin:0;flex-shrink:0"
+                   data-lote="${lote}" data-parcela="${(parcela||'').replace(/"/g,'&quot;')}"
+                   data-cid="${cid}" data-max="${max}" ${checked ? 'checked' : ''}
+                   onchange="_onToggleLoteEntrega(this)">
+            <span style="flex:1;min-width:0"><strong>${lote}</strong> · ${parcela||'—'}
+                <span style="color:var(--muted)">· ${fechaTxt}</span></span>
+            <input type="number" class="e-lote-gav" style="width:60px;padding:4px 6px;flex-shrink:0"
+                   min="1" max="${max}" value="${val}" ${checked ? '' : 'disabled'} oninput="_recalcGavEntrega()">
+            <span style="color:var(--muted);font-size:.75rem;white-space:nowrap;flex-shrink:0">/ ${max} gav</span>
         </label>`;
-    }).join('');
 }
 
-// Sumar las gavetas de envío de los lotes marcados (referencia; el kg es manual)
+// Poblar el checklist con lotes que aún tienen gavetas por despachar (despacho parcial).
+// En modo edición (entregaEdit) descuenta lo despachado por OTRAS entregas y pre-marca/pre-llena lo propio.
+function _renderLotesChecklistEntrega(entregaEdit) {
+    const cont = document.getElementById('e-lotes-checklist');
+    if (!cont) return;
+    const editId = entregaEdit ? String(entregaEdit.id) : null;
+    const despOtros = _gavetasDespachadasPorLote(editId); // gavetas despachadas por otras entregas
+
+    // Lote → detalle que esta entrega ya le asignó (para pre-marcar/pre-llenar y no perderlo)
+    const misLotes = new Map();
+    (entregaEdit && Array.isArray(entregaEdit.lotesDetalle) ? entregaEdit.lotesDetalle : [])
+        .forEach(l => { if (l && l.lote) misLotes.set(l.lote, l); });
+
+    const cosechas = DB.get('cosechas')
+        .filter(c => c.loteHacienda)
+        .sort((a,b) => (a.fecha||'').localeCompare(b.fecha||''));
+
+    const filas = [];
+    cosechas.forEach(c => {
+        const envio     = _envioLote(c);
+        const restante  = envio - (despOtros[c.loteHacienda] || 0); // disponible para esta entrega
+        const detalle   = misLotes.get(c.loteHacienda);
+        const marcado   = !!detalle;
+        misLotes.delete(c.loteHacienda);
+        if (restante <= 0 && !marcado) return; // agotado y no es de esta entrega → ocultar
+        const max = Math.max(restante, marcado ? (parseInt(detalle.gavetas)||0) : 0);
+        const val = marcado ? Math.min(parseInt(detalle.gavetas)||max, max) : max;
+        filas.push(_chkRowEntrega(c.loteHacienda, c.parcela, c.id, fmt.date(c.fecha), max, val, marcado));
+    });
+    // Lotes de la entrega cuya cosecha ya no existe: conservarlos marcados (no perder datos)
+    misLotes.forEach(l => {
+        const g = parseInt(l.gavetas)||0;
+        filas.push(_chkRowEntrega(l.lote, l.parcela, l.cosechaId||'', '(cosecha eliminada)', g, g, true));
+    });
+
+    cont.innerHTML = filas.length ? filas.join('')
+        : '<p style="color:var(--muted);font-size:.82rem;padding:8px 10px;margin:0">No hay lotes con gavetas disponibles. Registra una cosecha (o quedan todas despachadas).</p>';
+}
+
+// Al marcar/desmarcar un lote: habilita su campo de gavetas y pone el default (todas las restantes)
+function _onToggleLoteEntrega(chk) {
+    const row = chk.closest('label');
+    const gavInput = row.querySelector('.e-lote-gav');
+    if (gavInput) {
+        gavInput.disabled = !chk.checked;
+        if (chk.checked && (!gavInput.value || +gavInput.value <= 0)) gavInput.value = gavInput.max;
+    }
+    _recalcGavEntrega();
+}
+
+// Sumar las gavetas a despachar de los lotes marcados (el kg es manual)
 function _recalcGavEntrega() {
     let suma = 0, n = 0;
-    document.querySelectorAll('#e-lotes-checklist .e-lote-chk:checked')
-        .forEach(chk => { suma += parseInt(chk.dataset.gav) || 0; n++; });
+    document.querySelectorAll('#e-lotes-checklist .e-lote-chk:checked').forEach(chk => {
+        const g = parseInt(chk.closest('label').querySelector('.e-lote-gav')?.value) || 0;
+        suma += g; n++;
+    });
     const el = document.getElementById('e-gav-envio');
-    if (el) el.textContent = n ? `${n} lote(s) · ${suma} gavetas de envío seleccionadas` : '';
+    if (el) el.textContent = n ? `${n} lote(s) · ${suma} gavetas a despachar` : '';
 }
 
 function saveEntrega() {
-    const fecha = val('e-fecha');
-    const tipo  = val('e-tipo') || 'iteranza';
-    const kg    = numVal('e-kg');
-    const esDir = tipo === 'venta_directa';
+    const fecha  = val('e-fecha');
+    const tipo   = val('e-tipo') || 'iteranza';
+    const kg     = numVal('e-kg');
+    const editId = val('e-id');
+    const esDir  = tipo === 'venta_directa';
     const marcados = [...document.querySelectorAll('#e-lotes-checklist .e-lote-chk:checked')];
     if (!fecha)            return alert('La fecha de salida es obligatoria.');
     if (!marcados.length)  return alert('Marca al menos un lote de cosecha a despachar.');
     if (!kg)               return alert('Ingresa los kg pesados.');
     if (esDir && !val('e-destino')) return alert('Indica el comprador de la venta directa.');
 
-    const lotesDetalle = marcados.map(chk => ({
-        lote:      chk.dataset.lote,
-        parcela:   chk.dataset.parcela,
-        gavetas:   parseInt(chk.dataset.gav) || 0,   // gavetas de envío del lote
-        cosechaId: chk.dataset.cid
-    }));
+    // Gavetas a despachar por lote (permite parcial); se topa al máximo disponible
+    let excedido = false;
+    const lotesDetalle = marcados.map(chk => {
+        const gavInput = chk.closest('label').querySelector('.e-lote-gav');
+        const max = parseInt(chk.dataset.max) || 0;
+        let g = parseInt(gavInput?.value) || 0;
+        if (g > max) { g = max; excedido = true; }
+        return {
+            lote:      chk.dataset.lote,
+            parcela:   chk.dataset.parcela,
+            gavetas:   g,
+            cosechaId: chk.dataset.cid
+        };
+    }).filter(l => l.gavetas > 0);
+
+    if (!lotesDetalle.length) return alert('Indica cuántas gavetas de cada lote van en esta entrega.');
+    if (excedido) alert('⚠️ Algún lote tenía más gavetas de las disponibles; se ajustó al máximo.');
 
     const precioKg   = esDir ? numVal('e-precio') : 0;
     const valorTotal = esDir ? (numVal('e-valor') || kg * precioKg) : 0;
 
-    DB.add('entregas', {
+    const campos = {
         fecha,
         tipoSalida:   tipo,                             // 'iteranza' | 'venta_directa'
         lotesDetalle,                                   // trazabilidad: qué lotes/parcelas van en la guía
@@ -4190,7 +4278,14 @@ function saveEntrega() {
         transporte:   val('e-transporte'),
         destino:      val('e-destino') || (esDir ? 'Comprador' : 'Iteranza'),
         notas:        val('e-notas')
-    });
+    };
+    if (editId) {
+        const arr = DB.get('entregas');
+        const idx = arr.findIndex(x => String(x.id) === String(editId));
+        if (idx >= 0) { arr[idx] = { ...arr[idx], ...campos }; DB.set('entregas', arr); }
+    } else {
+        DB.add('entregas', campos);
+    }
     closeModal('modal-entrega');
     render(); // re-render cosechas (estado despachado) + entregas
 }
@@ -4250,7 +4345,7 @@ function renderEntregas() {
             <td><strong>${fmt.kg(e.kg)}</strong></td>
             <td style="font-size:.85rem">${e.destino || '—'}</td>
             <td style="white-space:nowrap">${valorCell}</td>
-            <td><button class="btn btn-danger-ghost" onclick="del('entregas', ${e.id})">✕</button></td>
+            <td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="openEntrega(${e.id})" title="Editar" style="margin-right:4px">✏️</button><button class="btn btn-danger-ghost" onclick="del('entregas', ${e.id})">✕</button></td>
         </tr>`;
     }).join('') + `<tr style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
         <td colspan="4" style="padding:10px 12px">TOTAL</td>
@@ -6511,16 +6606,25 @@ function calcIteranzaPreview() {
     }
 }
 
-function openIteranza() {
+function openIteranza(id) {
+    const p = id ? DB.get('poscosecha').find(x => String(x.id) === String(id)) : null;
     const now = new Date();
-    document.getElementById('it-mes').value  = String(now.getMonth() + 1).padStart(2, '0');
-    document.getElementById('it-anio').value = now.getFullYear();
-    document.getElementById('it-fecha').value = now.toISOString().slice(0, 10);
-    ['it-semanas','it-lotes','it-kg-planta','it-kg-export',
-     'it-kg-local','it-kg-rechazo','it-valor','it-ids-lotes','it-notas-extra']
-        .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-    document.getElementById('iteranza-preview').style.display = 'none';
     openModal('modal-iteranza');
+    document.getElementById('it-modal-titulo').textContent = p ? '✏️ Editar Informe de Pos-cosecha' : '📋 Registrar Informe Iteranza / Durexporta';
+    document.getElementById('it-id').value        = p ? p.id : '';
+    document.getElementById('it-mes').value        = p?.mes  || String(now.getMonth() + 1).padStart(2, '0');
+    document.getElementById('it-anio').value       = p?.anio || now.getFullYear();
+    document.getElementById('it-fecha').value      = p?.fecha || now.toISOString().slice(0, 10);
+    document.getElementById('it-semanas').value    = p?.semanas || '';
+    document.getElementById('it-lotes').value       = p?.lotes || '';
+    document.getElementById('it-kg-planta').value   = p?.kgRecibidos || '';
+    document.getElementById('it-kg-export').value   = p?.kgExport || '';
+    document.getElementById('it-kg-local').value    = p?.kgLocal || '';
+    document.getElementById('it-kg-rechazo').value  = p?.kgRechazo || '';
+    document.getElementById('it-valor').value       = p?.valorFacturado || '';
+    document.getElementById('it-ids-lotes').value   = p?.idsLotes || '';
+    document.getElementById('it-notas-extra').value = p?.notas || '';
+    calcIteranzaPreview();
 }
 
 function saveIteranza() {
@@ -6541,11 +6645,12 @@ function saveIteranza() {
     if (!kgPlanta || kgPlanta<=0) return alert('Los Kg Planta son obligatorios y deben ser > 0.');
     if (!valor    || valor<=0)    return alert('El Valor Facturado es obligatorio y debe ser > 0.');
 
+    const editId = document.getElementById('it-id').value;
     const tag = `iteranza_${anio}_${mes}`;
     const existentes = DB.get('poscosecha');
-    if (existentes.some(c => c._tag === tag)) {
+    if (existentes.some(c => c._tag === tag && String(c.id) !== String(editId))) {
         const mesN = getMesNombre(mes);
-        if (!confirm(`⚠️ Ya existe un informe de pos-cosecha para ${mesN} ${anio}.\n¿Deseas agregar otro registro para el mismo mes de todas formas?`)) return;
+        if (!confirm(`⚠️ Ya existe un informe de pos-cosecha para ${mesN} ${anio}.\n¿Deseas guardar otro registro para el mismo mes de todas formas?`)) return;
     }
 
     const precio  = valor / kgPlanta;
@@ -6555,7 +6660,7 @@ function saveIteranza() {
     // Período legible (ej: "Enero 2026 · sem 2-4")
     const periodo = mesN + ' ' + anio + (semanas ? ' · sem ' + semanas : '');
 
-    DB.add('poscosecha', {
+    const campos = {
         _tag:      tag,
         fecha,                              // fecha de liquidación
         periodo,
@@ -6572,7 +6677,14 @@ function saveIteranza() {
         idsLotes:  idsLotes || '',
         comprador: 'INTERANZA / INTDEX',
         notas:     notasEx || ''
-    });
+    };
+    if (editId) {
+        const arr = DB.get('poscosecha');
+        const idx = arr.findIndex(x => String(x.id) === String(editId));
+        if (idx >= 0) { arr[idx] = { ...arr[idx], ...campos }; DB.set('poscosecha', arr); }
+    } else {
+        DB.add('poscosecha', campos);
+    }
 
     closeModal('modal-iteranza');
     renderPoscosecha();
