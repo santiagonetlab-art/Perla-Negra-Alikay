@@ -4174,15 +4174,23 @@ function renderDashboard() {
     const totalKgPlanta = poscosecha.reduce((s, p) => s + (parseFloat(p.kgRecibidos)||0), 0); // recibido en planta
     const _ing = ingresoTotales(poscosecha, entregas);                                        // ingreso real (regla única)
     const ingresoIteranza = _ing.iteranza, ingresoDirecto = _ing.directa, totalIngresos = _ing.total;
-    const _cost = calcularCostos({ gastos, labores });
-    const totalGastos   = _cost.gastos;
-    const totalLabCosto = _cost.labores;
-    const pendientes    = labores.filter(l => l.estado === 'Pendiente').length;
-    const utilidad      = totalIngresos - totalGastos - totalLabCosto;
+    // Costos: gastos + labores + jornadas (mano de obra por día) + nómina fija (prorrateada)
+    const jornadas    = filtrarCiclo(DB.get('jornadas'), cicloSel);
+    const _cost       = calcularCostos({ gastos, labores, jornadas });
+    let mesesPeriodo;
+    if (cicloSel) mesesPeriodo = _mesesCiclo(cicloSel);
+    else {
+        const fechas = [...gastos, ...labores, ...jornadas].map(x => x.fecha).filter(Boolean).sort();
+        mesesPeriodo = fechas.length ? Math.max(0, (Date.now() - new Date(fechas[0])) / (30.44 * 86400000)) : 0;
+    }
+    const nominaCosto = calcularNomina(DB.get('trabajadores')).costoMes * mesesPeriodo;
+    const totalCostos = _cost.total + nominaCosto;
+    const pendientes  = labores.filter(l => l.estado === 'Pendiente').length;
+    const utilidad    = totalIngresos - totalCostos;
 
     // Profit banner
     const pb = document.getElementById('profit-banner');
-    if (totalIngresos > 0 || totalGastos > 0) {
+    if (totalIngresos > 0 || totalCostos > 0) {
         const pos = utilidad >= 0;
         pb.innerHTML = `
             <div class="profit-banner ${pos ? 'positive' : 'negative'}">
@@ -4193,7 +4201,7 @@ function renderDashboard() {
                 </div>
                 <div style="margin-left:auto;font-size:.82rem;opacity:.7">
                     Ingresos: ${fmt.money(totalIngresos)}<br>
-                    Gastos: ${fmt.money(totalGastos + totalLabCosto)}
+                    Costos: ${fmt.money(totalCostos)}
                 </div>
             </div>`;
     } else {
@@ -4222,9 +4230,9 @@ function renderDashboard() {
             <div class="s-sub">Iteranza ${fmt.money(ingresoIteranza)} · directa ${fmt.money(ingresoDirecto)}</div>
         </div>
         <div class="stat-card danger">
-            <div class="s-label">Gastos Totales</div>
-            <div class="s-value" style="font-size:1.4rem">${fmt.money(totalGastos + totalLabCosto)}</div>
-            <div class="s-sub">gastos + labores</div>
+            <div class="s-label">Costos Totales</div>
+            <div class="s-value" style="font-size:1.4rem">${fmt.money(totalCostos)}</div>
+            <div class="s-sub">gastos + labores + jornadas + nómina</div>
         </div>
         <div class="stat-card ${pendientes > 0 ? 'warn' : ''}">
             <div class="s-label">Labores Pendientes</div>
