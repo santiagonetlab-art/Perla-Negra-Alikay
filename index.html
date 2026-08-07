@@ -781,6 +781,9 @@
         <div class="nav-item" data-page="trazabilidad">
             <span class="icon">🔗</span> Trazabilidad
         </div>
+        <div class="nav-item" data-page="ciclos">
+            <span class="icon">🗓️</span> Ciclos
+        </div>
         <div class="nav-item" data-page="insumos">
             <span class="icon">🧪</span> Insumos
         </div>
@@ -1764,6 +1767,60 @@
         </div>
     </div>
 
+    <!-- PÁGINA CICLOS PRODUCTIVOS -->
+    <div id="page-ciclos" class="page">
+        <div class="page-header">
+            <h2>🗓️ Ciclos Productivos</h2>
+            <div class="header-actions">
+                <button class="btn btn-primary" onclick="openCiclo()">＋ Nuevo Ciclo</button>
+            </div>
+        </div>
+        <p style="font-size:.82rem;color:var(--muted);margin:-6px 0 14px">
+            Define tus ciclos por rango de fechas (el aguacate no es anual). Cada registro pertenece a un ciclo según su fecha — así comparas desempeño <strong>sin mezclar históricos</strong>. Los costos se cuentan en el ciclo de su fecha.
+        </p>
+
+        <!-- Lista de ciclos -->
+        <div class="card" style="margin-bottom:20px">
+            <div class="card-header">Mis ciclos</div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Ciclo</th>
+                            <th>Inicio</th>
+                            <th>Fin</th>
+                            <th>Duración</th>
+                            <th>Notas</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="ciclos-lista"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Comparación entre ciclos -->
+        <div class="card">
+            <div class="card-header">Comparación de desempeño por ciclo</div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Ciclo</th>
+                            <th style="text-align:right">Gavetas envío</th>
+                            <th style="text-align:right">Kg planta</th>
+                            <th style="text-align:right">%Export</th>
+                            <th style="text-align:right">Ingreso</th>
+                            <th style="text-align:right">Costo</th>
+                            <th style="text-align:right">Margen</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ciclos-comparacion"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <!-- PÁGINA TRATAMIENTOS -->
     <div id="page-tratamientos" class="page">
         <div class="page-header">
@@ -2411,6 +2468,39 @@
     </div>
 </div>
 
+<!-- MODAL CICLO PRODUCTIVO -->
+<div class="modal-overlay" id="modal-ciclo">
+    <div class="modal">
+        <h3 id="ci-modal-titulo">🗓️ Nuevo Ciclo Productivo</h3>
+        <input type="hidden" id="ci-id">
+        <p style="font-size:.8rem;color:var(--muted);margin:-4px 0 12px">
+            El ciclo es un rango de fechas. Deja el fin vacío si el ciclo sigue en curso.
+        </p>
+        <div class="form-group">
+            <label>Nombre del ciclo *</label>
+            <input type="text" id="ci-nombre" placeholder="Ciclo 2025-2026">
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Inicio *</label>
+                <input type="date" id="ci-inicio">
+            </div>
+            <div class="form-group">
+                <label>Fin <small style="color:var(--muted);font-weight:400">(vacío = en curso)</small></label>
+                <input type="date" id="ci-fin">
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Notas</label>
+            <textarea id="ci-notas" rows="2" placeholder="Floración, condiciones, observaciones del ciclo..."></textarea>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-cancel" onclick="closeModal('modal-ciclo')">Cancelar</button>
+            <button class="btn btn-primary" onclick="saveCiclo()">Guardar Ciclo</button>
+        </div>
+    </div>
+</div>
+
 <!-- MODAL EDITAR GASTO DE FACTURA (corrección manual opcional) -->
 <div class="modal-overlay" id="modal-edit-scan">
     <div class="modal" style="max-width:480px">
@@ -2813,7 +2903,7 @@ const _fdb = firebase.firestore();
 // ─── COLECCIONES ────────────────────────────────────────────
 const COLECCIONES = ['parcelas','cosechas','entregas','poscosecha','gastos','labores','insumos',
                      'trabajadores','jornadas','muestreos','observaciones',
-                     'tratamientos','facturas_scan'];
+                     'tratamientos','facturas_scan','ciclos'];
 
 // ─── SERIALIZACIÓN (Firestore no soporta arrays anidados) ───
 // Los arrays anidados (ej: coordenadas de polígonos) se convierten
@@ -3114,6 +3204,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
         if (page === 'graficas')      renderGraficas();
         if (page === 'rentabilidad')  renderRentabilidad();
         if (page === 'trazabilidad')  renderTrazabilidad();
+        if (page === 'ciclos')        renderCiclos();
         if (page === 'facturas')      { loadApiKey(); renderFacturasHistory(); }
         if (page === 'mapa')          renderMapa();
         if (page === 'observaciones') renderObservaciones();
@@ -3885,6 +3976,55 @@ function calcularRentabilidad({ parcelas = [], cosechas = [], poscosecha = [], e
              costoMesFijo: nomina.costoMes, kgPlantaFinca, totalHaSembradas };
 }
 
+// ─── CICLOS PRODUCTIVOS — el ciclo es un RANGO DE FECHAS ───
+// (no se etiqueta cada registro: la pertenencia se deriva de la fecha → cero migración)
+function ciclosOrdenados() {
+    return [...DB.get('ciclos')].sort((a, b) => (b.inicio || '').localeCompare(a.inicio || ''));
+}
+function _fechaDeReg(r) { return r.fechaISO || r.fecha || ''; }
+function enCiclo(fecha, ciclo) {
+    if (!fecha || !ciclo) return false;
+    return fecha >= (ciclo.inicio || '') && (!ciclo.fin || fecha <= ciclo.fin);
+}
+function cicloDe(fecha) { return ciclosOrdenados().find(c => enCiclo(fecha, c)) || null; }
+function cicloActivo() { return cicloDe(todayISO()) || ciclosOrdenados()[0] || null; }
+function filtrarCiclo(arr, ciclo) {
+    if (!ciclo) return arr;                       // sin ciclo = histórico (todos)
+    return (arr || []).filter(r => enCiclo(_fechaDeReg(r), ciclo));
+}
+function _mesesCiclo(ciclo) {
+    if (!ciclo || !ciclo.inicio) return 0;
+    const fin = ciclo.fin ? new Date(ciclo.fin) : new Date();
+    return Math.max(0, (fin - new Date(ciclo.inicio)) / (30.44 * 86400000));
+}
+
+// Resumen (KPIs) de un ciclo — compone los helpers de la Fase 01 sobre los datos del rango
+function resumenCiclo(ciclo) {
+    const cos = filtrarCiclo(DB.get('cosechas'), ciclo);
+    const ent = filtrarCiclo(DB.get('entregas'), ciclo);
+    const pos = filtrarCiclo(DB.get('poscosecha'), ciclo);
+    const gas = filtrarCiclo(DB.get('gastos'), ciclo);
+    const lab = filtrarCiclo(DB.get('labores'), ciclo);
+    const jor = filtrarCiclo(DB.get('jornadas'), ciclo);
+
+    const gavetas  = cos.reduce((s, c) => s + (parseInt(c.gavetas) || 0), 0);
+    const envio    = cos.reduce((s, c) => s + Math.max(0, (parseInt(c.gavetas)||0) - (parseInt(c.desechoGavetas)||0)), 0);
+    const kgPlanta = pos.reduce((s, p) => s + (parseFloat(p.kgRecibidos) || 0), 0);
+    const kgExport = pos.reduce((s, p) => s + (parseFloat(p.kgExport) || 0), 0);
+
+    const ingreso  = ingresoTotales(pos, ent).total;
+    const directo  = calcularCostos({ gastos: gas, labores: lab, jornadas: jor }).total;
+    const nomina   = calcularNomina(DB.get('trabajadores')).costoMes * _mesesCiclo(ciclo);
+    const costoTotal = directo + nomina;
+
+    return {
+        gavetas, envio, kgPlanta, ingreso,
+        costoDirecto: directo, nomina, costoTotal,
+        margen: ingreso - costoTotal,
+        pctExport: kgPlanta > 0 ? kgExport / kgPlanta * 100 : null
+    };
+}
+
 // ─── PRUEBAS DE CÁLCULO (regresión) ────────────────────────
 // Verifica las reglas puras con entradas fijas. Se corre sola al cargar (1 línea en consola).
 // Ejecutable a mano desde la consola: _selfTestCalculos()
@@ -3944,6 +4084,14 @@ function _selfTestCalculos() {
     check('concil.merma',     con.mermaTotal,   -100); // 600 − 700
     check('concil.alertas',   con.alertas.length, 2);  // fruta parada + recibido>enviado
 
+    // Ciclos: pertenencia por rango de fechas (helpers puros)
+    const cic = { inicio: '2025-08-01', fin: '2026-07-31' };
+    check('ciclo.dentro',  enCiclo('2025-09-15', cic) ? 1 : 0, 1);
+    check('ciclo.antes',   enCiclo('2025-07-31', cic) ? 1 : 0, 0);
+    check('ciclo.despues', enCiclo('2026-08-01', cic) ? 1 : 0, 0);
+    check('ciclo.abierto', enCiclo('2030-01-01', { inicio: '2025-08-01', fin: '' }) ? 1 : 0, 1);
+    check('ciclo.filtra',  filtrarCiclo([{ fecha:'2025-09-01' }, { fecha:'2026-08-15' }, { fechaISO:'2026-01-10' }], cic).length, 2);
+
     const fallan = casos.filter(c => !c.ok);
     if (fallan.length) console.warn(`⚠️ Self-test cálculos: ${fallan.length}/${casos.length} FALLAN`, fallan);
     else               console.log(`✓ Self-test cálculos: ${casos.length}/${casos.length} OK`);
@@ -3964,6 +4112,8 @@ function render() {
     if (graficasPage && graficasPage.classList.contains('active')) renderGraficas();
     const trazPage = document.getElementById('page-trazabilidad');
     if (trazPage && trazPage.classList.contains('active')) renderTrazabilidad();
+    const ciclosPage = document.getElementById('page-ciclos');
+    if (ciclosPage && ciclosPage.classList.contains('active')) renderCiclos();
 }
 
 function renderDashboard() {
@@ -4691,6 +4841,82 @@ function renderTrazabilidad() {
             <td style="font-size:.84rem">${estado}</td>
         </tr>`;
     }).join('') : `<tr><td colspan="5" style="text-align:center;color:#aaa;padding:20px">Aún no hay entregas ni informes de planta.</td></tr>`;
+}
+
+// ── CICLOS — CRUD + comparación ─────────────────────────────
+function _sugerirInicioCiclo() {
+    const ult = ciclosOrdenados()[0];
+    if (ult && ult.fin) { const d = new Date(ult.fin); d.setDate(d.getDate() + 1); return d.toISOString().slice(0,10); }
+    return '';
+}
+function _ciclosSolapan(a, b) {
+    const aFin = a.fin || '9999-12-31', bFin = b.fin || '9999-12-31';
+    return a.inicio <= bFin && b.inicio <= aFin;
+}
+function openCiclo(id) {
+    const c = id ? DB.get('ciclos').find(x => String(x.id) === String(id)) : null;
+    openModal('modal-ciclo');
+    document.getElementById('ci-modal-titulo').textContent = c ? '✏️ Editar Ciclo' : '🗓️ Nuevo Ciclo Productivo';
+    document.getElementById('ci-id').value     = c ? c.id : '';
+    document.getElementById('ci-nombre').value = c?.nombre || '';
+    document.getElementById('ci-inicio').value = c?.inicio || _sugerirInicioCiclo();
+    document.getElementById('ci-fin').value    = c?.fin || '';
+    document.getElementById('ci-notas').value  = c?.notas || '';
+}
+function saveCiclo() {
+    const nombre = val('ci-nombre');
+    const inicio = val('ci-inicio');
+    const fin    = val('ci-fin');
+    const editId = val('ci-id');
+    if (!nombre)              return alert('Ponle un nombre al ciclo.');
+    if (!inicio)             return alert('El inicio es obligatorio.');
+    if (fin && fin < inicio) return alert('El fin no puede ser anterior al inicio.');
+    const solapa = DB.get('ciclos').some(c => String(c.id) !== String(editId) && _ciclosSolapan({ inicio, fin }, c));
+    if (solapa && !confirm('⚠️ Este ciclo se solapa con otro existente (un registro podría caer en dos ciclos).\n¿Guardar de todas formas?')) return;
+    const campos = { nombre, inicio, fin: fin || '', notas: val('ci-notas') };
+    if (editId) DB.update('ciclos', editId, campos);
+    else        DB.add('ciclos', campos);
+    closeModal('modal-ciclo');
+    renderCiclos();
+}
+function eliminarCiclo(id) {
+    if (!confirm('¿Eliminar este ciclo? Los registros NO se borran, solo la definición del ciclo.')) return;
+    DB.remove('ciclos', id);
+    renderCiclos();
+}
+function renderCiclos() {
+    const ciclos = ciclosOrdenados();
+    const activo = cicloActivo();
+
+    const lista = document.getElementById('ciclos-lista');
+    if (lista) lista.innerHTML = ciclos.length ? ciclos.map(c => {
+        const esActivo = activo && String(activo.id) === String(c.id);
+        let dur = 'en curso';
+        if (c.fin) { const m = (new Date(c.fin) - new Date(c.inicio)) / (30.44 * 86400000); dur = (m < 2 ? Math.round(m*30.44) + ' días' : m.toFixed(1) + ' meses'); }
+        return `<tr>
+            <td><strong>${c.nombre}</strong>${esActivo ? ' <span class="badge badge-green" style="font-size:10px">activo</span>' : ''}</td>
+            <td style="white-space:nowrap">${fmt.date(c.inicio)}</td>
+            <td style="white-space:nowrap">${c.fin ? fmt.date(c.fin) : '<span style="color:#bbb">en curso</span>'}</td>
+            <td>${dur}</td>
+            <td style="max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${c.notas||''}">${c.notas || '—'}</td>
+            <td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="openCiclo(${c.id})" title="Editar" style="margin-right:4px">✏️</button><button class="btn btn-danger-ghost" onclick="eliminarCiclo(${c.id})">✕</button></td>
+        </tr>`;
+    }).join('') : emptyRow(6, '🗓️', 'No hay ciclos definidos. Crea el primero con "＋ Nuevo Ciclo".');
+
+    const comp = document.getElementById('ciclos-comparacion');
+    if (comp) comp.innerHTML = ciclos.length ? ciclos.map(c => {
+        const r = resumenCiclo(c);
+        const margenCol = r.margen >= 0 ? 'var(--primary)' : '#d32f2f';
+        return `<tr>
+            <td><strong>${c.nombre}</strong></td>
+            <td style="text-align:right">${fmt.num(r.envio)}</td>
+            <td style="text-align:right">${r.kgPlanta ? fmt.num(Math.round(r.kgPlanta)) : '—'}</td>
+            <td style="text-align:right">${r.pctExport != null ? r.pctExport.toFixed(0) + '%' : '—'}</td>
+            <td style="text-align:right;color:#2d6a4f">${fmt.money(r.ingreso)}</td>
+            <td style="text-align:right;color:#c62828">${fmt.money(r.costoTotal)}</td>
+            <td style="text-align:right;font-weight:700;color:${margenCol}">${fmt.money(r.margen)}</td>
+        </tr>`;
+    }).join('') : `<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px">Define al menos un ciclo para comparar.</td></tr>`;
 }
 
 function renderGastos() {
