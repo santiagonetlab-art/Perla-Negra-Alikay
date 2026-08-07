@@ -4188,6 +4188,14 @@ function renderDashboard() {
     const pendientes  = labores.filter(l => l.estado === 'Pendiente').length;
     const utilidad    = totalIngresos - totalCostos;
 
+    // Desglose del costo (solo las partes con valor) — para saber de dónde viene
+    const _partesCosto = [];
+    if (nominaCosto)    _partesCosto.push(`Nómina $${fmt.num(Math.round(nominaCosto))}`);
+    if (_cost.jornadas) _partesCosto.push(`Jornadas $${fmt.num(Math.round(_cost.jornadas))}`);
+    if (_cost.gastos)   _partesCosto.push(`Gastos $${fmt.num(Math.round(_cost.gastos))}`);
+    if (_cost.labores)  _partesCosto.push(`Labores $${fmt.num(Math.round(_cost.labores))}`);
+    const costoSub = _partesCosto.length ? _partesCosto.join(' · ') : 'gastos + labores + jornadas + nómina';
+
     // Profit banner
     const pb = document.getElementById('profit-banner');
     if (totalIngresos > 0 || totalCostos > 0) {
@@ -4232,7 +4240,7 @@ function renderDashboard() {
         <div class="stat-card danger">
             <div class="s-label">Costos Totales</div>
             <div class="s-value" style="font-size:1.4rem">${fmt.money(totalCostos)}</div>
-            <div class="s-sub">gastos + labores + jornadas + nómina</div>
+            <div class="s-sub" style="line-height:1.5">${costoSub}</div>
         </div>
         <div class="stat-card ${pendientes > 0 ? 'warn' : ''}">
             <div class="s-label">Labores Pendientes</div>
