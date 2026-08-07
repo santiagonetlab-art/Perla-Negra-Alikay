@@ -851,7 +851,10 @@
     <div id="page-dashboard" class="page active">
         <div class="page-header">
             <h2>📊 Resumen General</h2>
-            <span id="dash-date" style="font-size:.82rem;color:var(--muted)"></span>
+            <div class="header-actions" style="align-items:center;gap:10px">
+                <select id="dash-ciclo" onchange="setDashCiclo(this.value)" class="btn btn-outline btn-sm" style="padding:5px 10px;cursor:pointer"></select>
+                <span id="dash-date" style="font-size:.82rem;color:var(--muted)"></span>
+            </div>
         </div>
         <!-- Acciones rápidas -->
         <div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;align-items:center">
@@ -4116,19 +4119,41 @@ function render() {
     if (ciclosPage && ciclosPage.classList.contains('active')) renderCiclos();
 }
 
+// Ciclo seleccionado en el Dashboard (undefined = sin inicializar → ciclo activo; null = Todo/histórico)
+let _dashCicloId = undefined;
+function setDashCiclo(v) { _dashCicloId = (v === '__todo__' ? null : v); renderDashboard(); }
+
 function renderDashboard() {
-    const parcelas   = DB.get('parcelas');
-    const cosechas   = DB.get('cosechas');
-    const poscosecha = DB.get('poscosecha');
-    const labores    = DB.get('labores');
-    const gastos     = DB.get('gastos');
+    const parcelas = DB.get('parcelas');   // estructura: SIEMPRE total (no depende del ciclo)
+
+    // ── Ciclo seleccionado (default: ciclo activo) ──
+    const ciclos = ciclosOrdenados();
+    if (_dashCicloId === undefined) { const a = cicloActivo(); _dashCicloId = a ? String(a.id) : null; }
+    let cicloSel = _dashCicloId ? ciclos.find(c => String(c.id) === String(_dashCicloId)) : null;
+    if (_dashCicloId && !cicloSel) _dashCicloId = null;   // el ciclo fue borrado → histórico
+
+    const selEl = document.getElementById('dash-ciclo');
+    if (selEl) {
+        const act = cicloActivo();
+        selEl.innerHTML = `<option value="__todo__">📅 Todo (histórico)</option>` +
+            ciclos.map(c => `<option value="${c.id}">${c.nombre}${act && String(act.id)===String(c.id) ? ' · activo' : ''}</option>`).join('');
+        selEl.value = cicloSel ? String(cicloSel.id) : '__todo__';
+    }
+
+    // ── Datos del ciclo (producción/plata se filtran; estructura no) ──
+    const cosechas   = filtrarCiclo(DB.get('cosechas'), cicloSel);
+    const poscosecha = filtrarCiclo(DB.get('poscosecha'), cicloSel);
+    const entregas   = filtrarCiclo(DB.get('entregas'), cicloSel);
+    const labores    = filtrarCiclo(DB.get('labores'), cicloSel);
+    const gastos     = filtrarCiclo(DB.get('gastos'), cicloSel);
+    const scopeLabel = cicloSel ? cicloSel.nombre : 'histórico total';
 
     const totalHa       = parcelas.reduce((s, p) => s + (p.ha || 0), 0);
     const totalArboles  = parcelas.reduce((s, p) => s + (p.arboles || 0), 0);
     const totalGavetas  = cosechas.reduce((s, c) => s + (parseInt(c.gavetas)||0), 0);          // producción de campo (gavetas)
     const totalGavEnvio = cosechas.reduce((s, c) => s + Math.max(0,(parseInt(c.gavetas)||0)-(parseInt(c.desechoGavetas)||0)), 0);
     const totalKgPlanta = poscosecha.reduce((s, p) => s + (parseFloat(p.kgRecibidos)||0), 0); // recibido en planta
-    const _ing = ingresoTotales(poscosecha, DB.get('entregas'));                              // ingreso real (regla única)
+    const _ing = ingresoTotales(poscosecha, entregas);                                        // ingreso real (regla única)
     const ingresoIteranza = _ing.iteranza, ingresoDirecto = _ing.directa, totalIngresos = _ing.total;
     const _cost = calcularCostos({ gastos, labores });
     const totalGastos   = _cost.gastos;
@@ -4144,7 +4169,7 @@ function renderDashboard() {
             <div class="profit-banner ${pos ? 'positive' : 'negative'}">
                 <span style="font-size:1.6rem">${pos ? '📈' : '📉'}</span>
                 <div>
-                    <div style="font-size:.8rem;opacity:.7">UTILIDAD NETA (Ingresos − Gastos)</div>
+                    <div style="font-size:.8rem;opacity:.7">UTILIDAD NETA · ${scopeLabel}</div>
                     <div class="pb-amount">${fmt.money(utilidad)}</div>
                 </div>
                 <div style="margin-left:auto;font-size:.82rem;opacity:.7">
