@@ -778,6 +778,9 @@
         <div class="nav-item" data-page="rentabilidad">
             <span class="icon">💰</span> Rentabilidad
         </div>
+        <div class="nav-item" data-page="trazabilidad">
+            <span class="icon">🔗</span> Trazabilidad
+        </div>
         <div class="nav-item" data-page="insumos">
             <span class="icon">🧪</span> Insumos
         </div>
@@ -1701,6 +1704,64 @@
         </div>
         <!-- Indicadores visuales por parcela -->
         <div id="rent-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px"></div>
+    </div>
+
+    <!-- PÁGINA TRAZABILIDAD / CONCILIACIÓN -->
+    <div id="page-trazabilidad" class="page">
+        <div class="page-header">
+            <h2>🔗 Trazabilidad y Conciliación</h2>
+            <span style="font-size:.82rem;color:var(--muted)">Cosecha → Entrega → Planta</span>
+        </div>
+        <p style="font-size:.82rem;color:var(--muted);margin:-6px 0 14px">
+            Cuadre de la cadena y alertas de inconsistencia. El nivel por lote es trazable; el nivel planta es a nivel finca/período (Iteranza liquida en agregado).
+        </p>
+
+        <!-- Alertas -->
+        <div id="traz-alertas" style="margin-bottom:20px"></div>
+
+        <!-- Resumen -->
+        <div id="traz-resumen" class="stats-grid" style="margin-bottom:22px"></div>
+
+        <!-- Nivel lote: cosecha → entrega -->
+        <div class="card" style="margin-bottom:20px">
+            <div class="card-header">Por lote · cosecha → entrega</div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Lote</th>
+                            <th>Parcela</th>
+                            <th>Cosecha</th>
+                            <th style="text-align:right">Envío (gav)</th>
+                            <th style="text-align:right">Despachadas</th>
+                            <th style="text-align:right">Restante</th>
+                            <th>Estado</th>
+                            <th>Alerta</th>
+                        </tr>
+                    </thead>
+                    <tbody id="traz-lotes"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Nivel período: entrega → planta -->
+        <div class="card">
+            <div class="card-header">Por período · entrega Iteranza → planta (kg)</div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Período</th>
+                            <th style="text-align:right">Enviado (kg)</th>
+                            <th style="text-align:right">Recibido planta (kg)</th>
+                            <th style="text-align:right">Merma</th>
+                            <th>Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody id="traz-periodos"></tbody>
+                </table>
+            </div>
+        </div>
     </div>
 
     <!-- PÁGINA TRATAMIENTOS -->
@@ -3052,6 +3113,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
         if (page === 'poscosecha')    renderPoscosecha();
         if (page === 'graficas')      renderGraficas();
         if (page === 'rentabilidad')  renderRentabilidad();
+        if (page === 'trazabilidad')  renderTrazabilidad();
         if (page === 'facturas')      { loadApiKey(); renderFacturasHistory(); }
         if (page === 'mapa')          renderMapa();
         if (page === 'observaciones') renderObservaciones();
@@ -3869,6 +3931,19 @@ function _selfTestCalculos() {
     check('rent.margen',    R.margenFinca,     1020);  // 1200 − 180
     check('rent.gavetas',   R.tot.kgTotal,     40);
 
+    // Conciliación (Fase 3): fruta parada + merma negativa
+    const con = calcularConciliacion({
+        cosechas:   [{ loteHacienda:'L1', parcela:'A', fecha:'2026-01-01', gavetas:42, desechoGavetas:2 },   // 40 envío, sin despachar
+                     { loteHacienda:'L2', parcela:'B', fecha:'2026-01-20', gavetas:30, desechoGavetas:0 }],  // 30 envío, despachado
+        entregas:   [{ tipoSalida:'iteranza', fecha:'2026-01-21', kg:600, lotesDetalle:[{ lote:'L2', gavetas:30 }] }],
+        poscosecha: [{ mes:'01', anio:'2026', kgRecibidos:700 }],   // recibido > enviado
+        umbralDiasFinca: 7, hoy: new Date('2026-02-01T12:00:00')
+    });
+    check('concil.envioGav',  con.totEnvioGav,  70);   // 40 + 30
+    check('concil.despGav',   con.totDespGav,   30);
+    check('concil.merma',     con.mermaTotal,   -100); // 600 − 700
+    check('concil.alertas',   con.alertas.length, 2);  // fruta parada + recibido>enviado
+
     const fallan = casos.filter(c => !c.ok);
     if (fallan.length) console.warn(`⚠️ Self-test cálculos: ${fallan.length}/${casos.length} FALLAN`, fallan);
     else               console.log(`✓ Self-test cálculos: ${casos.length}/${casos.length} OK`);
@@ -3887,6 +3962,8 @@ function render() {
     renderInsumos();
     const graficasPage = document.getElementById('page-graficas');
     if (graficasPage && graficasPage.classList.contains('active')) renderGraficas();
+    const trazPage = document.getElementById('page-trazabilidad');
+    if (trazPage && trazPage.classList.contains('active')) renderTrazabilidad();
 }
 
 function renderDashboard() {
@@ -4497,6 +4574,123 @@ function renderEntregas() {
         <td style="color:var(--primary)">${ingresoDirecto>0 ? fmt.money(ingresoDirecto) : ''}</td>
         <td></td>
     </tr>`;
+}
+
+// ── CONCILIACIÓN (Fase 3) — cuadre de la cadena, función pura ──
+function calcularConciliacion({ cosechas, entregas, poscosecha, umbralDiasFinca = 7, hoy = new Date() } = {}) {
+    cosechas   = cosechas   || DB.get('cosechas');
+    entregas   = entregas   || DB.get('entregas');
+    poscosecha = poscosecha || DB.get('poscosecha');
+
+    // Gavetas despachadas por lote (desde las entregas dadas)
+    const despGav = {};
+    entregas.forEach(e => (Array.isArray(e.lotesDetalle) ? e.lotesDetalle : [])
+        .forEach(l => { if (l && l.lote) despGav[l.lote] = (despGav[l.lote] || 0) + (parseInt(l.gavetas) || 0); }));
+
+    // ── Nivel lote: cosecha → entrega ──
+    const lotes = cosechas.filter(c => c.loteHacienda).map(c => {
+        const envio    = Math.max(0, (parseInt(c.gavetas)||0) - (parseInt(c.desechoGavetas)||0));
+        const desp     = despGav[c.loteHacienda] || 0;
+        const restante = envio - desp;
+        const estado   = desp <= 0 ? 'en_finca' : (desp < envio ? 'parcial' : 'despachado');
+        const dias     = c.fecha ? Math.floor((hoy - new Date(c.fecha)) / 86400000) : null;
+        const alertas  = [];
+        if (desp > envio)                                        alertas.push({ nivel: 'alto',  msg: `Sobre-despacho (${desp} > ${envio} gav)` });
+        if (restante > 0 && dias != null && dias > umbralDiasFinca) alertas.push({ nivel: 'medio', msg: `En finca hace ${dias} días` });
+        return { lote: c.loteHacienda, parcela: c.parcela || '', fecha: c.fecha || '', envio, despachadas: desp, restante, estado, dias, alertas };
+    }).sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''));
+
+    // ── Nivel período: entrega Iteranza → planta (kg) ──
+    const mesActual = hoy.toISOString().slice(0,7);
+    const envMes = {}, recMes = {};
+    entregas.filter(e => e.tipoSalida !== 'venta_directa').forEach(e => {
+        const ym = (e.fecha||'').slice(0,7); if (ym) envMes[ym] = (envMes[ym]||0) + (parseFloat(e.kg)||0);
+    });
+    poscosecha.forEach(p => {
+        const ym = (p.anio && p.mes) ? `${p.anio}-${p.mes}` : (p.fecha||'').slice(0,7);
+        if (ym) recMes[ym] = (recMes[ym]||0) + (parseFloat(p.kgRecibidos)||0);
+    });
+    const periodos = [...new Set([...Object.keys(envMes), ...Object.keys(recMes)])].sort().reverse().map(ym => {
+        const enviado = envMes[ym]||0, recibido = recMes[ym]||0, merma = enviado - recibido;
+        const alertas = [];
+        if (recibido > enviado + 0.5)                       alertas.push({ nivel: 'alto',  msg: 'Recibido > enviado' });
+        if (enviado > 0 && recibido === 0 && ym < mesActual) alertas.push({ nivel: 'medio', msg: 'Sin liquidación (posible informe pendiente)' });
+        return { periodo: ym, enviado, recibido, merma, alertas };
+    });
+
+    // ── Totales + alertas agregadas ──
+    const totEnvioGav = lotes.reduce((s,l) => s + l.envio, 0);
+    const totDespGav  = lotes.reduce((s,l) => s + l.despachadas, 0);
+    const totRestGav  = lotes.reduce((s,l) => s + Math.max(0, l.restante), 0);
+    const totKgEnv    = periodos.reduce((s,p) => s + p.enviado, 0);
+    const totKgRec    = periodos.reduce((s,p) => s + p.recibido, 0);
+
+    const alertas = [];
+    lotes.forEach(l => l.alertas.forEach(a => alertas.push({ ...a, ref: l.lote + (l.parcela ? ' · ' + l.parcela : '') })));
+    periodos.forEach(p => p.alertas.forEach(a => alertas.push({ ...a, ref: 'Período ' + p.periodo })));
+    alertas.sort((a,b) => (a.nivel === b.nivel ? 0 : a.nivel === 'alto' ? -1 : 1));
+
+    return { lotes, periodos, alertas,
+             totEnvioGav, totDespGav, totRestGav, totKgEnv, totKgRec, mermaTotal: totKgEnv - totKgRec };
+}
+
+function renderTrazabilidad() {
+    const c = calcularConciliacion({ umbralDiasFinca: 7 });
+
+    // Alertas
+    const alertBox = document.getElementById('traz-alertas');
+    if (alertBox) {
+        if (!c.alertas.length) {
+            alertBox.innerHTML = `<div style="background:var(--ok-wash,#e6f0e4);border:1px solid #b7dfca;border-radius:10px;padding:12px 16px;color:#2d6a4f;font-size:.9rem">✓ Sin inconsistencias detectadas en la cadena.</div>`;
+        } else {
+            alertBox.innerHTML = `<div class="card" style="padding:12px 16px;border-left:4px solid #e07b2a">
+                <div style="font-weight:700;margin-bottom:8px;font-size:.92rem">⚠️ ${c.alertas.length} punto${c.alertas.length!==1?'s':''} de atención</div>
+                ${c.alertas.map(a => `<div style="display:flex;gap:9px;align-items:flex-start;padding:5px 0;border-top:1px solid #f0f0f0;font-size:.86rem">
+                    <span>${a.nivel==='alto'?'🔴':'🟡'}</span>
+                    <div><strong>${a.ref}</strong> — ${a.msg}</div>
+                </div>`).join('')}
+            </div>`;
+        }
+    }
+
+    // Resumen
+    const resum = document.getElementById('traz-resumen');
+    if (resum) resum.innerHTML = `
+        <div class="stat-card highlight"><div class="s-label">Envío en gavetas</div><div class="s-value">${fmt.num(c.totEnvioGav)}</div><div class="s-sub">${fmt.num(c.totDespGav)} despachadas · ${fmt.num(c.totRestGav)} en finca</div></div>
+        <div class="stat-card"><div class="s-label">Enviado a Iteranza</div><div class="s-value">${fmt.num(Math.round(c.totKgEnv))}<span style="font-size:1rem;font-weight:400"> kg</span></div><div class="s-sub">peso al despachar</div></div>
+        <div class="stat-card ${c.mermaTotal<0?'danger':(c.mermaTotal>0?'warn':'')}"><div class="s-label">Merma campo → planta</div><div class="s-value" style="font-size:1.5rem">${c.totKgRec>0?fmt.num(Math.round(c.mermaTotal))+' kg':'—'}</div><div class="s-sub">${c.totKgRec>0?(c.totKgEnv>0?(c.mermaTotal/c.totKgEnv*100).toFixed(1)+'% del enviado':'—'):'sin datos de planta'}</div></div>`;
+
+    // Tabla lotes
+    const estadoBadge = { en_finca:'<span class="badge badge-yellow">en finca</span>', parcial:'<span class="badge badge-blue">parcial</span>', despachado:'<span class="badge badge-green">despachado</span>' };
+    const tl = document.getElementById('traz-lotes');
+    if (tl) tl.innerHTML = c.lotes.length ? c.lotes.map(l => `
+        <tr ${l.alertas.length?'style="background:#fffaf0"':''}>
+            <td><strong>${l.lote}</strong></td>
+            <td>${l.parcela||'—'}</td>
+            <td style="white-space:nowrap">${fmt.date(l.fecha)}${l.dias!=null?`<br><small style="color:#999">${l.dias} días</small>`:''}</td>
+            <td style="text-align:right">${l.envio}</td>
+            <td style="text-align:right">${l.despachadas||'—'}</td>
+            <td style="text-align:right">${l.restante>0?l.restante:'0'}</td>
+            <td>${estadoBadge[l.estado]||'—'}</td>
+            <td style="font-size:.82rem">${l.alertas.map(a=>`${a.nivel==='alto'?'🔴':'🟡'} ${a.msg}`).join('<br>')||'<span style="color:#cfcfcf">✓</span>'}</td>
+        </tr>`).join('') : `<tr><td colspan="8" style="text-align:center;color:#aaa;padding:20px">No hay lotes de cosecha registrados.</td></tr>`;
+
+    // Tabla períodos
+    const tp = document.getElementById('traz-periodos');
+    if (tp) tp.innerHTML = c.periodos.length ? c.periodos.map(p => {
+        const alto = p.alertas.some(a=>a.nivel==='alto');
+        const medio = p.alertas.some(a=>a.nivel==='medio');
+        const estado = alto ? '🔴 '+p.alertas.find(a=>a.nivel==='alto').msg
+                     : medio ? '🟡 '+p.alertas.find(a=>a.nivel==='medio').msg
+                     : (p.recibido>0 ? '<span class="badge badge-green">cuadra</span>' : '<span style="color:#bbb">—</span>');
+        return `<tr ${p.alertas.length?'style="background:#fffaf0"':''}>
+            <td style="white-space:nowrap"><strong>${p.periodo}</strong></td>
+            <td style="text-align:right">${p.enviado?fmt.num(Math.round(p.enviado)):'—'}</td>
+            <td style="text-align:right">${p.recibido?fmt.num(Math.round(p.recibido)):'—'}</td>
+            <td style="text-align:right">${p.recibido&&p.enviado?fmt.num(Math.round(p.merma)):'—'}</td>
+            <td style="font-size:.84rem">${estado}</td>
+        </tr>`;
+    }).join('') : `<tr><td colspan="5" style="text-align:center;color:#aaa;padding:20px">Aún no hay entregas ni informes de planta.</td></tr>`;
 }
 
 function renderGastos() {
