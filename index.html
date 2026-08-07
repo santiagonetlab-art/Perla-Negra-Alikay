@@ -852,7 +852,7 @@
         <div class="page-header">
             <h2>📊 Resumen General</h2>
             <div class="header-actions" style="align-items:center;gap:10px">
-                <select id="dash-ciclo" onchange="setDashCiclo(this.value)" class="btn btn-outline btn-sm" style="padding:5px 10px;cursor:pointer"></select>
+                <select id="dash-ciclo" onchange="setCicloGlobal(this.value)" class="btn btn-outline btn-sm" style="padding:5px 10px;cursor:pointer"></select>
                 <span id="dash-date" style="font-size:.82rem;color:var(--muted)"></span>
             </div>
         </div>
@@ -1161,7 +1161,7 @@
         <div class="page-header">
             <h2>📈 Gráficas de Producción</h2>
             <div class="header-actions">
-                <select id="chart-anio" class="btn btn-outline btn-sm" style="padding:5px 10px" onchange="renderGraficas()">
+                <select id="chart-ciclo" class="btn btn-outline btn-sm" style="padding:5px 10px;cursor:pointer" onchange="setCicloGlobal(this.value)">
                 </select>
             </div>
         </div>
@@ -1676,7 +1676,7 @@
         <div class="page-header">
             <h2>💰 Rentabilidad por Parcela</h2>
             <div class="header-actions">
-                <select id="rent-anio" onchange="renderRentabilidad()" class="btn btn-outline btn-sm" style="padding:5px 10px"></select>
+                <select id="rent-ciclo" onchange="setCicloGlobal(this.value)" class="btn btn-outline btn-sm" style="padding:5px 10px;cursor:pointer"></select>
                 <span id="rent-periodo" style="font-size:12px;color:#888"></span>
             </div>
         </div>
@@ -1716,7 +1716,10 @@
     <div id="page-trazabilidad" class="page">
         <div class="page-header">
             <h2>🔗 Trazabilidad y Conciliación</h2>
-            <span style="font-size:.82rem;color:var(--muted)">Cosecha → Entrega → Planta</span>
+            <div class="header-actions" style="align-items:center;gap:10px">
+                <select id="traz-ciclo" onchange="setCicloGlobal(this.value)" class="btn btn-outline btn-sm" style="padding:5px 10px;cursor:pointer"></select>
+                <span style="font-size:.82rem;color:var(--muted)">Cosecha → Entrega → Planta</span>
+            </div>
         </div>
         <p style="font-size:.82rem;color:var(--muted);margin:-6px 0 14px">
             Cuadre de la cadena y alertas de inconsistencia. El nivel por lote es trazable; el nivel planta es a nivel finca/período (Iteranza liquida en agregado).
@@ -4000,6 +4003,17 @@ function _mesesCiclo(ciclo) {
     const fin = ciclo.fin ? new Date(ciclo.fin) : new Date();
     return Math.max(0, (fin - new Date(ciclo.inicio)) / (30.44 * 86400000));
 }
+// Lista de meses 'YYYY-MM' entre inicio y fin (para el eje de las gráficas mensuales del ciclo)
+function _mesesDelRango(inicio, fin) {
+    const out = [];
+    if (!inicio) return out;
+    let d = new Date(inicio.slice(0,7) + '-01T00:00:00');
+    const end = new Date((fin || todayISO()).slice(0,7) + '-01T00:00:00');
+    let guard = 0;
+    while (d <= end && guard < 240) { out.push(d.toISOString().slice(0,7)); d.setMonth(d.getMonth() + 1); guard++; }
+    return out;
+}
+function _labelMes(ym) { const [y, m] = (ym || '').split('-'); return (MESES[+m - 1] || '') + ' ' + (y || '').slice(2); }
 
 // Resumen (KPIs) de un ciclo — compone los helpers de la Fase 01 sobre los datos del rango
 function resumenCiclo(ciclo) {
@@ -4113,32 +4127,37 @@ function render() {
     renderInsumos();
     const graficasPage = document.getElementById('page-graficas');
     if (graficasPage && graficasPage.classList.contains('active')) renderGraficas();
+    const rentPage = document.getElementById('page-rentabilidad');
+    if (rentPage && rentPage.classList.contains('active')) renderRentabilidad();
     const trazPage = document.getElementById('page-trazabilidad');
     if (trazPage && trazPage.classList.contains('active')) renderTrazabilidad();
     const ciclosPage = document.getElementById('page-ciclos');
     if (ciclosPage && ciclosPage.classList.contains('active')) renderCiclos();
 }
 
-// Ciclo seleccionado en el Dashboard (undefined = sin inicializar → ciclo activo; null = Todo/histórico)
-let _dashCicloId = undefined;
-function setDashCiclo(v) { _dashCicloId = (v === '__todo__' ? null : v); renderDashboard(); }
+// ── Ciclo seleccionado GLOBAL (compartido: Dashboard/Rentabilidad/Gráficas/Trazabilidad) ──
+// undefined = sin inicializar → ciclo activo; null = Todo/histórico; id = ese ciclo
+let _cicloSelId = undefined;
+function cicloSeleccionado() {
+    if (_cicloSelId === undefined) { const a = cicloActivo(); _cicloSelId = a ? String(a.id) : null; }
+    if (_cicloSelId === null) return null;
+    const c = ciclosOrdenados().find(x => String(x.id) === String(_cicloSelId));
+    if (!c) { _cicloSelId = null; return null; }   // el ciclo fue borrado → histórico
+    return c;
+}
+function setCicloGlobal(v) { _cicloSelId = (v === '__todo__' ? null : v); render(); }
+function _poblarSelectorCiclo(selectEl) {
+    if (!selectEl) return;
+    const act = cicloActivo(), sel = cicloSeleccionado();
+    selectEl.innerHTML = `<option value="__todo__">📅 Todo (histórico)</option>` +
+        ciclosOrdenados().map(c => `<option value="${c.id}">${c.nombre}${act && String(act.id)===String(c.id) ? ' · activo' : ''}</option>`).join('');
+    selectEl.value = sel ? String(sel.id) : '__todo__';
+}
 
 function renderDashboard() {
     const parcelas = DB.get('parcelas');   // estructura: SIEMPRE total (no depende del ciclo)
-
-    // ── Ciclo seleccionado (default: ciclo activo) ──
-    const ciclos = ciclosOrdenados();
-    if (_dashCicloId === undefined) { const a = cicloActivo(); _dashCicloId = a ? String(a.id) : null; }
-    let cicloSel = _dashCicloId ? ciclos.find(c => String(c.id) === String(_dashCicloId)) : null;
-    if (_dashCicloId && !cicloSel) _dashCicloId = null;   // el ciclo fue borrado → histórico
-
-    const selEl = document.getElementById('dash-ciclo');
-    if (selEl) {
-        const act = cicloActivo();
-        selEl.innerHTML = `<option value="__todo__">📅 Todo (histórico)</option>` +
-            ciclos.map(c => `<option value="${c.id}">${c.nombre}${act && String(act.id)===String(c.id) ? ' · activo' : ''}</option>`).join('');
-        selEl.value = cicloSel ? String(cicloSel.id) : '__todo__';
-    }
+    const cicloSel = cicloSeleccionado();
+    _poblarSelectorCiclo(document.getElementById('dash-ciclo'));
 
     // ── Datos del ciclo (producción/plata se filtran; estructura no) ──
     const cosechas   = filtrarCiclo(DB.get('cosechas'), cicloSel);
@@ -4810,7 +4829,14 @@ function calcularConciliacion({ cosechas, entregas, poscosecha, umbralDiasFinca 
 }
 
 function renderTrazabilidad() {
-    const c = calcularConciliacion({ umbralDiasFinca: 7 });
+    const cicloSel = cicloSeleccionado();
+    _poblarSelectorCiclo(document.getElementById('traz-ciclo'));
+    const c = calcularConciliacion({
+        cosechas:   filtrarCiclo(DB.get('cosechas'), cicloSel),
+        entregas:   filtrarCiclo(DB.get('entregas'), cicloSel),
+        poscosecha: filtrarCiclo(DB.get('poscosecha'), cicloSel),
+        umbralDiasFinca: 7
+    });
 
     // Alertas
     const alertBox = document.getElementById('traz-alertas');
@@ -5038,51 +5064,55 @@ function renderGraficas() {
     const gastos     = DB.get('gastos');
     const labores    = DB.get('labores');
 
-    // Populate year selector
-    const anioSel = document.getElementById('chart-anio');
-    if (!anioSel) return;
-    const allYears = [...new Set([
-        ...cosechas.map(c => c.fecha?.slice(0,4)),
-        ...poscosecha.map(p => p.fecha?.slice(0,4)),
-        ...gastos.map(g => g.fecha?.slice(0,4))
-    ].filter(Boolean))].sort().reverse();
-    const currentYear = new Date().getFullYear().toString();
-    if (allYears.length === 0) allYears.push(currentYear);
-    const selectedYear = anioSel.value || allYears[0];
-    if (!anioSel.value) {
-        anioSel.innerHTML = allYears.map(y => `<option value="${y}" ${y===selectedYear?'selected':''}>${y}</option>`).join('');
-    }
+    // Selector de ciclo (global compartido)
+    const chartSel = document.getElementById('chart-ciclo');
+    if (!chartSel) return;
+    const cicloSel = cicloSeleccionado();
+    _poblarSelectorCiclo(chartSel);
 
-    const cosAño  = cosechas.filter(c => c.fecha?.startsWith(selectedYear));
-    const posAño  = poscosecha.filter(p => (p.fecha||'').startsWith(selectedYear));
-    const gasAño  = gastos.filter(g => g.fecha?.startsWith(selectedYear));
-    const labAño  = labores.filter(l => l.fecha?.startsWith(selectedYear));
+    // Datos filtrados por ciclo (o todos)
+    const cosF = filtrarCiclo(cosechas, cicloSel);
+    const posF = filtrarCiclo(poscosecha, cicloSel);
+    const gasF = filtrarCiclo(gastos, cicloSel);
+    const labF = filtrarCiclo(labores, cicloSel);
+    const entF = filtrarCiclo(DB.get('entregas'), cicloSel);
+
+    // Eje mensual: por la línea del ciclo (o, si "Todos", del primer al último dato)
+    let ejeInicio, ejeFin;
+    if (cicloSel) { ejeInicio = cicloSel.inicio; ejeFin = cicloSel.fin || todayISO(); }
+    else {
+        const fechas = [...cosF, ...posF, ...gasF, ...labF, ...entF].map(_fechaDeReg).filter(Boolean).sort();
+        ejeInicio = fechas[0] || todayISO();
+        ejeFin    = fechas[fechas.length - 1] || todayISO();
+    }
+    const meses = _mesesDelRango(ejeInicio, ejeFin);
+    const idxMes = {}; meses.forEach((ym, i) => idxMes[ym] = i);
+    const chartLabels = meses.map(_labelMes);
 
     // gavetas por mes — producción de campo
-    const kgMes = Array(12).fill(0);
-    cosAño.forEach(c => { const m = parseInt(c.fecha?.slice(5,7)) - 1; if (m >= 0) kgMes[m] += (parseInt(c.gavetas) || 0); });
+    const kgMes = Array(meses.length).fill(0);
+    cosF.forEach(c => { const ym = _fechaDeReg(c).slice(0,7); if (ym in idxMes) kgMes[idxMes[ym]] += (parseInt(c.gavetas) || 0); });
 
-    // ingresos por mes — regla única (Iteranza + ventas directas), agrupada por mes
-    const ingMes = Array(12).fill(0);
-    const entAño = DB.get('entregas').filter(e => (e.fecha||'').startsWith(selectedYear));
-    ingresoEventos(posAño, entAño).forEach(ev => { const m = parseInt((ev.fecha||'').slice(5,7)) - 1; if (m >= 0) ingMes[m] += ev.monto; });
+    // ingresos por mes — regla única (Iteranza + ventas directas)
+    const ingMes = Array(meses.length).fill(0);
+    ingresoEventos(posF, entF).forEach(ev => { const ym = (ev.fecha||'').slice(0,7); if (ym in idxMes) ingMes[idxMes[ym]] += ev.monto; });
 
-    // gastos por mes
-    const gasMes = Array(12).fill(0);
-    gasAño.forEach(g => { const m = parseInt(g.fecha?.slice(5,7)) - 1; if (m >= 0) gasMes[m] += (g.monto || 0); });
-    labAño.forEach(l => { const m = parseInt(l.fecha?.slice(5,7)) - 1; if (m >= 0) gasMes[m] += (l.costo || 0); });
+    // gastos por mes (gastos + labores)
+    const gasMes = Array(meses.length).fill(0);
+    gasF.forEach(g => { const ym = (g.fecha||'').slice(0,7); if (ym in idxMes) gasMes[idxMes[ym]] += (parseFloat(g.monto) || 0); });
+    labF.forEach(l => { const ym = (l.fecha||'').slice(0,7); if (ym in idxMes) gasMes[idxMes[ym]] += (parseFloat(l.costo) || 0); });
 
     // gastos por categoría
     const catMap = {};
-    gasAño.forEach(g => { catMap[g.categoria] = (catMap[g.categoria] || 0) + (g.monto || 0); });
+    gasF.forEach(g => { catMap[g.categoria] = (catMap[g.categoria] || 0) + (parseFloat(g.monto) || 0); });
 
     // gavetas por parcela
     const parMap = {};
-    cosAño.forEach(c => { parMap[c.parcela] = (parMap[c.parcela] || 0) + (parseInt(c.gavetas) || 0); });
+    cosF.forEach(c => { parMap[c.parcela] = (parMap[c.parcela] || 0) + (parseInt(c.gavetas) || 0); });
 
     // labores por tipo
     const labMap = {};
-    labAño.forEach(l => { labMap[l.tipo] = (labMap[l.tipo] || 0) + 1; });
+    labF.forEach(l => { labMap[l.tipo] = (labMap[l.tipo] || 0) + 1; });
 
     const baseOpts = {
         responsive: true,
@@ -5095,7 +5125,7 @@ function renderGraficas() {
     destroyChart('chart-kg');
     chartInstances['chart-kg'] = new Chart(document.getElementById('chart-kg'), {
         type: 'bar',
-        data: { labels: MESES, datasets: [{ label: 'gavetas', data: kgMes, backgroundColor: '#52b788', borderRadius: 5 }] },
+        data: { labels: chartLabels, datasets: [{ label: 'gavetas', data: kgMes, backgroundColor: '#52b788', borderRadius: 5 }] },
         options: { ...baseOpts, plugins: { ...baseOpts.plugins, legend: { display: false } } }
     });
 
@@ -5103,7 +5133,7 @@ function renderGraficas() {
     destroyChart('chart-ingresos');
     chartInstances['chart-ingresos'] = new Chart(document.getElementById('chart-ingresos'), {
         type: 'bar',
-        data: { labels: MESES, datasets: [{ label: 'Ingresos $', data: ingMes, backgroundColor: '#2d6a4f', borderRadius: 5 }] },
+        data: { labels: chartLabels, datasets: [{ label: 'Ingresos $', data: ingMes, backgroundColor: '#2d6a4f', borderRadius: 5 }] },
         options: { ...baseOpts, plugins: { ...baseOpts.plugins, legend: { display: false } } }
     });
 
@@ -5124,7 +5154,7 @@ function renderGraficas() {
     chartInstances['chart-ing-vs-gas'] = new Chart(document.getElementById('chart-ing-vs-gas'), {
         type: 'bar',
         data: {
-            labels: MESES,
+            labels: chartLabels,
             datasets: [
                 { label: 'Ingresos', data: ingMes, backgroundColor: '#52b788', borderRadius: 4 },
                 { label: 'Gastos',   data: gasMes, backgroundColor: '#e07b2a', borderRadius: 4 }
@@ -7432,36 +7462,19 @@ function renderRentabilidad() {
     const labores      = DB.get('labores');
     const jornadas     = DB.get('jornadas');
 
-    // Selector de año
-    const anioSel = document.getElementById('rent-anio');
-    const anios = [...new Set([
-        ...cosechas.map(c => c.fecha?.slice(0,4)),
-        ...poscosecha.map(p => p.fecha?.slice(0,4)),
-        ...gastos.map(g => g.fecha?.slice(0,4)),
-        ...labores.map(l => l.fecha?.slice(0,4))
-    ])].filter(Boolean).sort().reverse();
+    // Selector de ciclo (global compartido)
+    const cicloSel = cicloSeleccionado();
+    _poblarSelectorCiclo(document.getElementById('rent-ciclo'));
+    document.getElementById('rent-periodo').textContent = cicloSel ? cicloSel.nombre : 'Histórico total';
 
-    if (anioSel && anioSel.options.length === 0) {
-        ['Todos', ...anios].forEach(a => {
-            const o = document.createElement('option');
-            o.value = a; o.textContent = a === 'Todos' ? 'Todos los años' : a;
-            anioSel.appendChild(o);
-        });
-    }
-    const anioFiltro = anioSel?.value || 'Todos';
-    document.getElementById('rent-periodo').textContent =
-        anioFiltro === 'Todos' ? 'Acumulado total' : `Año ${anioFiltro}`;
+    const cosFiltr = filtrarCiclo(cosechas, cicloSel);
+    const posFiltr = filtrarCiclo(poscosecha, cicloSel);
+    const entFiltr = filtrarCiclo(DB.get('entregas'), cicloSel);
+    const gasFiltr = filtrarCiclo(gastos, cicloSel);
+    const labFiltr = filtrarCiclo(labores, cicloSel);
+    const jorFiltr = filtrarCiclo(jornadas, cicloSel);
 
-    const filtrar = arr => anioFiltro === 'Todos' ? arr : arr.filter(x => x.fecha?.startsWith(anioFiltro));
-
-    const cosFiltr = filtrar(cosechas);
-    const posFiltr = filtrar(poscosecha);
-    const entFiltr = filtrar(DB.get('entregas'));
-    const gasFiltr = filtrar(gastos);
-    const labFiltr = filtrar(labores);
-    const jorFiltr = filtrar(jornadas);
-
-    // Cálculo centralizado (regla única) — recibe los arreglos YA filtrados por año
+    // Cálculo centralizado (regla única) — recibe los arreglos YA filtrados por ciclo
     const R = calcularRentabilidad({
         parcelas, cosechas: cosFiltr, poscosecha: posFiltr, entregas: entFiltr,
         gastos: gasFiltr, labores: labFiltr, jornadas: jorFiltr, trabajadores: DB.get('trabajadores')
@@ -7475,7 +7488,7 @@ function renderRentabilidad() {
         { label:'Ingreso total finca', value:fmt.money(ingresoFinca), sub:`Iteranza ${fmt.money(ingresoIteranza)} + directa ${fmt.money(ingresoDirecto)}`, cls: ingresoFinca>0?'highlight':'' },
         { label:'Costos totales',      value:fmt.money(tot.costoTotal), sub:'Gastos + labores + nómina', cls:'warn' },
         { label:'Margen finca',        value:fmt.money(margenFinca),  sub: ingresoFinca>0 ? (margenFinca/ingresoFinca*100).toFixed(1)+'% de rentabilidad' : '—', cls: margenFinca>=0?'highlight':'danger' },
-        { label:'Kg recibidos planta', value:fmt.num(Math.round(kgPlantaFinca))+' kg', sub: anioFiltro==='Todos'?'Total histórico':`En ${anioFiltro}`, cls:'' },
+        { label:'Kg recibidos planta', value:fmt.num(Math.round(kgPlantaFinca))+' kg', sub: cicloSel ? cicloSel.nombre : 'Total histórico', cls:'' },
         { label:'Gavetas cosecha campo', value:fmt.num(Math.round(tot.kgTotal))+' gav', sub:'Producción registrada', cls:'' },
     ];
     document.getElementById('rent-stats').innerHTML = statCards.map(s => `
