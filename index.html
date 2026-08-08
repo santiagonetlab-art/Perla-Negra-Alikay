@@ -916,6 +916,7 @@
         <div class="page-header">
             <h2>🔧 Labores y Actividades</h2>
             <div class="header-actions">
+                <select id="lab-ciclo" onchange="setCicloGlobal(this.value)" class="btn btn-outline btn-sm" style="padding:5px 10px;cursor:pointer"></select>
                 <button class="btn btn-outline btn-sm" onclick="exportCSV('labores')">⬇ Exportar</button>
                 <button class="btn btn-primary" onclick="openModal('modal-labor')">＋ Nueva Labor</button>
             </div>
@@ -946,6 +947,7 @@
         <div class="page-header">
             <h2>🧺 Cosecha de Campo</h2>
             <div class="header-actions">
+                <select id="cos-ciclo" onchange="setCicloGlobal(this.value)" class="btn btn-outline btn-sm" style="padding:5px 10px;cursor:pointer"></select>
                 <button class="btn btn-outline btn-sm" onclick="exportCSV('cosechas')">⬇ Exportar</button>
                 <button class="btn btn-primary" onclick="openCosecha()">＋ Nueva Cosecha</button>
             </div>
@@ -980,6 +982,7 @@
         <div class="page-header">
             <h2>🚚 Entregas / Salidas</h2>
             <div class="header-actions">
+                <select id="ent-ciclo" onchange="setCicloGlobal(this.value)" class="btn btn-outline btn-sm" style="padding:5px 10px;cursor:pointer"></select>
                 <button class="btn btn-outline btn-sm" onclick="exportCSV('entregas')">⬇ Exportar</button>
                 <button class="btn btn-primary" onclick="openEntrega()">＋ Nueva Salida</button>
             </div>
@@ -1014,6 +1017,7 @@
         <div class="page-header">
             <h2>📦 Pos-cosecha</h2>
             <div class="header-actions">
+                <select id="pos-ciclo" onchange="setCicloGlobal(this.value)" class="btn btn-outline btn-sm" style="padding:5px 10px;cursor:pointer"></select>
                 <button class="btn btn-outline btn-sm" onclick="exportCSV('poscosecha')">⬇ Exportar</button>
                 <button class="btn btn-outline btn-sm" onclick="importarIteranza2026()" style="border-color:#e07b2a;color:#e07b2a" title="Importar informes Iteranza Ene–Mar 2026">📥 Importar 2026</button>
                 <button class="btn btn-primary" onclick="openIteranza()" style="background:#2196f3">＋ Nuevo Informe</button>
@@ -4309,10 +4313,11 @@ function renderParcelas() {
 }
 
 function renderLabores() {
-    const data  = DB.get('labores');
+    _poblarSelectorCiclo(document.getElementById('lab-ciclo'));
+    const data  = filtrarCiclo(DB.get('labores'), cicloSeleccionado());
     const tbody = document.getElementById('tbody-labores');
     if (!data.length) {
-        tbody.innerHTML = emptyRow(8, '🔧', 'No hay labores registradas.');
+        tbody.innerHTML = emptyRow(8, '🔧', 'No hay labores en este ciclo.');
         return;
     }
     tbody.innerHTML = data.map(l => `
@@ -4329,10 +4334,11 @@ function renderLabores() {
 }
 
 function renderCosechas() {
-    const data  = DB.get('cosechas');
+    _poblarSelectorCiclo(document.getElementById('cos-ciclo'));
+    const data  = filtrarCiclo(DB.get('cosechas'), cicloSeleccionado());
     const tbody = document.getElementById('tbody-cosechas');
     if (!data.length) {
-        tbody.innerHTML = emptyRow(9, '🧺', 'No hay cosechas registradas.');
+        tbody.innerHTML = emptyRow(9, '🧺', 'No hay cosechas en este ciclo.');
         return;
     }
     const totalGav    = data.reduce((s,c) => s + (parseInt(c.gavetas)||0), 0);
@@ -4377,11 +4383,12 @@ function renderCosechas() {
 
 // ── POS-COSECHA (planta / empaque) ──────────────────────────
 function renderPoscosecha() {
-    const data  = DB.get('poscosecha');
     const tbody = document.getElementById('tbody-poscosecha');
     if (!tbody) return;
+    _poblarSelectorCiclo(document.getElementById('pos-ciclo'));
+    const data  = filtrarCiclo(DB.get('poscosecha'), cicloSeleccionado());
     if (!data.length) {
-        tbody.innerHTML = emptyRow(11, '📦', 'No hay informes de pos-cosecha. Usa "＋ Nuevo Informe" o "📥 Importar 2026".');
+        tbody.innerHTML = emptyRow(11, '📦', 'No hay informes de pos-cosecha en este ciclo. Usa "＋ Nuevo Informe" o "📥 Importar 2026".');
         return;
     }
     // Ordenar por fecha de liquidación descendente
@@ -4721,10 +4728,12 @@ function saveEntrega() {
 }
 
 function renderEntregas() {
-    const data  = DB.get('entregas');
     const tbody = document.getElementById('tbody-entregas');
     const resum = document.getElementById('entregas-resumen');
     if (!tbody) return;
+    _poblarSelectorCiclo(document.getElementById('ent-ciclo'));
+    const cicloSel = cicloSeleccionado();
+    const data  = filtrarCiclo(DB.get('entregas'), cicloSel);   // la TABLA se filtra por ciclo
 
     // Separar por canal: Iteranza (liquida en pos-cosecha) vs venta directa (final aquí)
     const esDirecta = e => e.tipoSalida === 'venta_directa';
@@ -4733,7 +4742,7 @@ function renderEntregas() {
     const totalKg    = kgIteranza + kgDirecta;
     const nDirectas  = data.filter(esDirecta).length;
     const ingresoDirecto = data.filter(esDirecta).reduce((s,e) => s + (parseFloat(e.valorTotal)||0), 0);
-    const totalRecibido = DB.get('poscosecha').reduce((s,p) => s + (parseFloat(p.kgRecibidos)||0), 0);
+    const totalRecibido = filtrarCiclo(DB.get('poscosecha'), cicloSel).reduce((s,p) => s + (parseFloat(p.kgRecibidos)||0), 0);
     const merma    = kgIteranza - totalRecibido;   // solo canal Iteranza
     const mermaPct = kgIteranza > 0 ? (merma / kgIteranza * 100) : 0;
     if (resum) {
