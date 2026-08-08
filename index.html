@@ -5281,7 +5281,19 @@ function renderGraficas() {
             labels: parLabels.length ? parLabels : ['Sin gavetas registradas en este ciclo'],
             datasets: [{ label: 'gavetas', data: parLabels.length ? Object.values(parMap) : [0], backgroundColor: COLORS, borderRadius: 5 }]
         },
-        options: { ...baseOpts, plugins: { ...baseOpts.plugins, legend: { display: false } }, indexAxis: 'y' }
+        // Barras HORIZONTALES: el eje de valores es X y el de categorías es Y.
+        // Hay que declararlos explícitos — heredar `baseOpts.scales` (pensado para barras
+        // verticales) deja X como categoría e Y lineal, y las barras se dibujan en cero.
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { type: 'linear', beginAtZero: true, ticks: { font: { size: 11 }, precision: 0 } },
+                y: { type: 'category', ticks: { font: { size: 11 } } }
+            }
+        }
     });
 
     // Chart 6 — labores por tipo
