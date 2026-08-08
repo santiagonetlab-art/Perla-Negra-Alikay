@@ -863,7 +863,7 @@
     <div class="sidebar-footer" style="display:flex;flex-direction:column;gap:6px">
         <!-- Sello de compilación: subir SIEMPRE al publicar. Sirve para saber, desde la app,
              si el navegador está corriendo el archivo nuevo o uno cacheado. -->
-        <span>v1.8 · build 2026-08-08-C</span>
+        <span>v1.9 · build 2026-08-08-D</span>
         <!-- Herramientas de datos: solo admin (destructivas) -->
         <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
             <div style="display:flex;gap:4px">
@@ -1775,8 +1775,25 @@
             </div>
         </div>
         <p style="font-size:.82rem;color:var(--muted);margin:-6px 0 14px">
-            Cuadre de la cadena y alertas de inconsistencia. El nivel por lote es trazable; el nivel planta es a nivel finca/período (Iteranza liquida en agregado).
+            Cuadre de la cadena y alertas de inconsistencia, desde la cosecha hasta el lote que asigna la planta.
         </p>
+
+        <!-- Buscador: lote de Iteranza → parcela de origen -->
+        <div class="card" style="margin-bottom:20px;padding:14px 16px">
+            <div style="font-weight:700;font-size:.92rem;margin-bottom:4px">🔎 ¿De qué parcela salió un lote de Iteranza?</div>
+            <div style="font-size:.8rem;color:var(--muted);margin-bottom:10px">Escribe el número de lote de la liquidación (ej. 14454) y te muestro la cadena completa hasta la parcela.</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <input type="text" id="traz-buscar-lote" placeholder="Nº de lote Iteranza" style="flex:1;min-width:160px;padding:7px 10px"
+                       oninput="buscarLoteIteranza()" onkeydown="if(event.key==='Enter'){event.preventDefault();buscarLoteIteranza();}">
+            </div>
+            <div id="traz-buscar-resultado" style="margin-top:10px"></div>
+        </div>
+
+        <!-- Rechazo atribuido a cada parcela -->
+        <div class="card" style="margin-bottom:20px">
+            <div class="card-header">Rechazo por parcela · lote Iteranza → guía → parcela</div>
+            <div id="traz-rechazo-parcela" style="padding:14px 16px"></div>
+        </div>
 
         <!-- Alertas -->
         <div id="traz-alertas" style="margin-bottom:20px"></div>
@@ -2386,9 +2403,17 @@
             </div>
         </div>
 
+        <!-- Lotes de Iteranza: el puente hacia la parcela. Cada lote se liga a su guía
+             de transporte (1 guía = 1 lote), y la guía ya sabe de qué lotes/parcelas salió. -->
         <div class="form-group">
-            <label>Números de lotes (opcional)</label>
-            <input type="text" id="it-ids-lotes" placeholder="14454, 14467, 14510, 14533 ...">
+            <label>Lotes de Iteranza (de la liquidación)</label>
+            <small style="display:block;color:var(--muted);font-size:.72rem;margin:-2px 0 6px">
+                Liga cada lote a la guía con que se despachó. Así, ante un rechazo o hallazgo, la app te dice de qué parcela salió.
+            </small>
+            <div id="it-lotes-lista" style="display:flex;flex-direction:column;gap:8px"></div>
+            <button type="button" class="btn btn-outline btn-sm" style="margin-top:8px" onclick="_addLoteIteranza()">＋ Agregar lote</button>
+            <small id="it-lotes-resumen" style="display:block;font-size:.75rem;margin-top:6px"></small>
+            <input type="hidden" id="it-ids-lotes">
         </div>
         <div class="form-group">
             <label>Notas adicionales</label>
@@ -2496,11 +2521,11 @@
                 <input type="text" id="e-transporte" placeholder="Placa o nombre">
             </div>
         </div>
-        <!-- Bloque Iteranza: guía que empata lote hacienda ↔ planta -->
+        <!-- Bloque Iteranza: la GUÍA DE TRANSPORTE (el lote que asigna Iteranza llega recién con la liquidación) -->
         <div class="form-group" id="e-block-iteranza">
-            <label>Guía / lote Iteranza</label>
-            <input type="text" id="e-guia-iteranza" placeholder="La que genera Iteranza al recibir">
-            <small style="display:block;color:var(--muted);font-size:.72rem;margin-top:3px">El valor final ($) llega después en el módulo Pos-cosecha (liquidación).</small>
+            <label>Guía de transporte Iteranza</label>
+            <input type="text" id="e-guia-iteranza" placeholder="La que genera Iteranza al recibir el despacho">
+            <small style="display:block;color:var(--muted);font-size:.72rem;margin-top:3px">Sirve para confirmar que llegó y que no quede pendiente de liquidar. El <strong>lote</strong> que asigna Iteranza y el valor ($) llegan después, con la liquidación, en el módulo Pos-cosecha.</small>
         </div>
         <!-- Bloque Venta directa: el ingreso se registra aquí -->
         <div id="e-block-directa" style="display:none">
@@ -4242,6 +4267,44 @@ function _selfTestCalculos() {
     check('kgEst.conNumero',    kgEstimado(10, 16), 160);
     check('kgEst.sinFactor',    kgEstimado(10), 165);
 
+    // Puente lote Iteranza ↔ parcela (vía guía de transporte, 1 guía = 1 lote)
+    const _ent = [
+        { id:1, fecha:'2026-08-04', kg:1700, guiaIteranza:'G-001',                 // guía PURA (solo Norte)
+          lotesDetalle:[{lote:'LH-1',parcela:'Norte',gavetas:95}] },
+        { id:2, fecha:'2026-08-06', kg:900,  guiaIteranza:'g-002',                 // pura Sur, minúscula a propósito
+          lotesDetalle:[{lote:'LH-2',parcela:'Sur',gavetas:60}] },
+        { id:3, fecha:'2026-08-08', kg:800,  loteIteranza:'G-003',                 // entrega VIEJA: guía en el campo mal nombrado
+          lotesDetalle:[{lote:'LH-3',parcela:'Norte',gavetas:25},
+                        {lote:'LH-4',parcela:'Sur',  gavetas:20}] }                // MEZCLADA
+    ];
+    const _pos = [{ periodo:'Agosto 2026', lotesIteranza:[
+        { lote:'14454', guia:'G-001', kgRecibidos:1650, kgExport:1400, kgLocal:150, kgRechazo:100 },
+        { lote:'14467', guia:'G-002', kgRecibidos: 880, kgExport: 800, kgLocal: 50, kgRechazo: 30 },
+        { lote:'14510', guia:'G-003', kgRecibidos: 780, kgExport: 700, kgLocal: 40, kgRechazo: 40 },  // mezclada
+        { lote:'14999', guia:'G-404', kgRecibidos: 100, kgExport:  90, kgLocal:  0, kgRechazo: 10 }   // guía inexistente
+    ]}];
+    const tz = trazarLoteIteranza('14454', { poscosecha:_pos, entregas:_ent });
+    check('traza.encuentra',    tz ? 1 : 0, 1);
+    check('traza.parcela',      tz.parcelas.length, 1);
+    check('traza.esNorte',      tz.parcelas[0] === 'Norte' ? 1 : 0, 1);
+    check('traza.loteHacienda', tz.lotesHacienda[0] === 'LH-1' ? 1 : 0, 1);
+    check('traza.rechazo',      tz.kgRechazo, 100);
+    check('traza.ligaEntrega',  tz.entrega ? tz.entrega.id : 0, 1);
+    // Case-insensitive: el lote 14467 apunta a 'G-002' y la entrega la guardó como 'g-002'
+    check('traza.mayusculas',   (trazarLoteIteranza('14467',{poscosecha:_pos,entregas:_ent})||{}).parcelas?.[0] === 'Sur' ? 1 : 0, 1);
+    // Entrega vieja con la guía en loteIteranza: igual se resuelve
+    check('traza.entregaVieja', (trazarLoteIteranza('14510',{poscosecha:_pos,entregas:_ent})||{}).entrega ? 1 : 0, 1);
+    check('traza.inexistente',  trazarLoteIteranza('00000',{poscosecha:_pos,entregas:_ent}) ? 1 : 0, 0);
+
+    const rp = rechazoPorParcela({ poscosecha:_pos, entregas:_ent });
+    check('rechazo.parcelas',   rp.filas.length, 2);                 // solo las de guía pura
+    check('rechazo.mixtas',     rp.mixtas.length, 1);                // la mezclada NO se reparte
+    check('rechazo.sinGuia',    rp.sinGuia.length, 1);               // guía inexistente se reporta
+    const rNorte = rp.filas.find(f => f.parcela === 'Norte');
+    check('rechazo.kgNorte',    rNorte.kgRechazo, 100);
+    check('rechazo.pctNorte',   rNorte.pctRechazo, 100/1650*100);
+    check('rechazo.ordenado',   rp.filas[0].pctRechazo >= rp.filas[1].pctRechazo ? 1 : 0, 1);
+
     const fallan = casos.filter(c => !c.ok);
     if (fallan.length) console.warn(`⚠️ Self-test cálculos: ${fallan.length}/${casos.length} FALLAN`, fallan);
     else               console.log(`✓ Self-test cálculos: ${casos.length}/${casos.length} OK`);
@@ -4920,8 +4983,9 @@ function saveEntrega() {
         lotesDetalle,                                   // trazabilidad: qué lotes/parcelas van en la guía
         kg,                                             // peso real pesado al entregar (total de la guía)
         guia:         val('e-guia'),                    // guía de remisión de la hacienda
+        // Guía de TRANSPORTE. El lote que asigna Iteranza NO se conoce aquí: llega con la
+        // liquidación y se captura en Pos-cosecha (`lotesIteranza[]`), ligado a esta guía.
         guiaIteranza: esDir ? '' : val('e-guia-iteranza'),
-        loteIteranza: esDir ? '' : val('e-guia-iteranza'), // compat con vistas que leen loteIteranza
         precioKg,                                       // solo venta directa
         valorTotal,                                     // ingreso de la venta directa (0 si Iteranza)
         transporte:   val('e-transporte'),
@@ -4984,7 +5048,8 @@ function renderEntregas() {
             lotesCell = e.loteHacienda || '—';
             parcelasCell = e.parcela || '—';
         }
-        if (e.loteIteranza) lotesCell += `<br><small style="color:#888">↔ ${e.loteIteranza}</small>`;
+        const _guiaIt = e.guiaIteranza || e.loteIteranza;   // entregas viejas guardaban la guía en loteIteranza
+        if (_guiaIt) lotesCell += `<br><small style="color:#888">guía ${_guiaIt}</small>`;
         const tipoCell = dir
             ? '<span class="badge badge-green" style="font-size:11px">🤝 Directa</span>'
             : '<span class="badge badge-blue" style="font-size:11px">🏭 Iteranza</span>';
@@ -5068,9 +5133,147 @@ function calcularConciliacion({ cosechas, entregas, poscosecha, umbralDiasFinca 
              totEnvioGav, totDespGav, totRestGav, totKgEnv, totKgRec, mermaTotal: totKgEnv - totKgRec };
 }
 
+// ── PUENTE LOTE ITERANZA ↔ PARCELA (funciones puras) ────────
+// Son DOS identificadores distintos, y este es el orden en que se conocen:
+//   1) guía de transporte Iteranza → se sabe AL DESPACHAR (entrega.guiaIteranza)
+//   2) lote que asigna Iteranza    → llega SOLO con la liquidación (poscosecha.lotesIteranza[].lote)
+// La finca confirmó que la relación es 1 guía = 1 lote, así que la guía es el eslabón:
+//   lote Iteranza → guía → entrega → lotesDetalle → lote de hacienda → parcela
+function _normId(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
+
+function _indiceGuias(entregasArr) {
+    const idx = {};
+    (entregasArr || []).forEach(e => {
+        // Entregas viejas guardaban la guía en `loteIteranza` (el campo estaba mal nombrado)
+        const g = _normId(e.guiaIteranza || e.loteIteranza);
+        if (g) idx[g] = e;
+    });
+    return idx;
+}
+
+function _parcelasDeEntrega(e) {
+    const det = (e && Array.isArray(e.lotesDetalle)) ? e.lotesDetalle : [];
+    return {
+        lotesHacienda: det.map(d => d.lote).filter(Boolean),
+        parcelas: [...new Set(det.map(d => d.parcela).filter(Boolean))]
+    };
+}
+
+// Rastrea un lote de Iteranza hasta las parcelas que lo originaron.
+function trazarLoteIteranza(lote, { poscosecha = [], entregas = [] } = {}) {
+    const buscado = _normId(lote);
+    if (!buscado) return null;
+    const idx = _indiceGuias(entregas);
+    let res = null;
+    poscosecha.forEach(p => {
+        (Array.isArray(p.lotesIteranza) ? p.lotesIteranza : []).forEach(li => {
+            if (_normId(li.lote) !== buscado) return;
+            const e = idx[_normId(li.guia)] || null;
+            const { lotesHacienda, parcelas } = _parcelasDeEntrega(e);
+            res = {
+                lote: li.lote, guia: li.guia || '', periodo: p.periodo || '',
+                kgRecibidos: parseFloat(li.kgRecibidos) || 0,
+                kgExport:    parseFloat(li.kgExport)    || 0,
+                kgLocal:     parseFloat(li.kgLocal)     || 0,
+                kgRechazo:   parseFloat(li.kgRechazo)   || 0,
+                entrega: e ? { id: e.id, fecha: e.fecha || '', kg: parseFloat(e.kg) || 0 } : null,
+                lotesHacienda, parcelas
+            };
+        });
+    });
+    return res;
+}
+
+// Rechazo atribuido a cada parcela. SOLO se atribuye cuando la guía traía UNA sola parcela;
+// si la guía venía mezclada no se reparte (sería inventar de quién era la fruta rechazada).
+function rechazoPorParcela({ poscosecha = [], entregas = [] } = {}) {
+    const idx = _indiceGuias(entregas);
+    const acum = {}; const mixtas = []; const sinGuia = [];
+    poscosecha.forEach(p => {
+        (Array.isArray(p.lotesIteranza) ? p.lotesIteranza : []).forEach(li => {
+            const rec  = parseFloat(li.kgRecibidos) || 0;
+            const rech = parseFloat(li.kgRechazo)   || 0;
+            const e = idx[_normId(li.guia)];
+            if (!e) { sinGuia.push({ lote: li.lote || '', guia: li.guia || '', kgRechazo: rech, kgRecibidos: rec }); return; }
+            const { parcelas } = _parcelasDeEntrega(e);
+            if (parcelas.length !== 1) {
+                mixtas.push({ lote: li.lote || '', parcelas, kgRechazo: rech, kgRecibidos: rec });
+                return;
+            }
+            const pn = parcelas[0];
+            (acum[pn] = acum[pn] || { kgRecibidos: 0, kgRechazo: 0, lotes: 0 });
+            acum[pn].kgRecibidos += rec; acum[pn].kgRechazo += rech; acum[pn].lotes++;
+        });
+    });
+    const filas = Object.entries(acum).map(([parcela, d]) => ({
+        parcela, ...d, pctRechazo: d.kgRecibidos > 0 ? d.kgRechazo / d.kgRecibidos * 100 : 0
+    })).sort((a, b) => b.pctRechazo - a.pctRechazo);
+    return { filas, mixtas, sinGuia };
+}
+
+// Buscador: número de lote de Iteranza → cadena completa hasta la parcela.
+// Busca en TODO el histórico (un hallazgo puede llegar de un período anterior al ciclo activo).
+function buscarLoteIteranza() {
+    const box = document.getElementById('traz-buscar-resultado');
+    const q   = (document.getElementById('traz-buscar-lote')?.value || '').trim();
+    if (!box) return;
+    if (!q) { box.innerHTML = ''; return; }
+    const r = trazarLoteIteranza(q, { poscosecha: DB.get('poscosecha'), entregas: DB.get('entregas') });
+    if (!r) {
+        box.innerHTML = `<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:10px 12px;font-size:.85rem">
+            No encontré el lote <strong>${q}</strong>. Revisa que esté cargado en el informe de Pos-cosecha del período correspondiente.</div>`;
+        return;
+    }
+    const mixta = r.parcelas.length > 1;
+    const paso = (t, v) => `<div style="display:flex;gap:8px;padding:4px 0"><span style="color:var(--muted);min-width:118px;flex-shrink:0">${t}</span><span>${v}</span></div>`;
+    box.innerHTML = `<div style="background:#e8f5e9;border:1px solid #b7dfca;border-radius:8px;padding:12px 14px;font-size:.85rem">
+        ${paso('Lote Iteranza', `<strong>${r.lote}</strong>${r.periodo ? ` · ${r.periodo}` : ''}`)}
+        ${paso('Guía transporte', r.guia || '<span style="color:#e07b2a">sin guía registrada</span>')}
+        ${paso('Entrega', r.entrega ? `${fmt.date(r.entrega.fecha)} · ${fmt.kg(r.entrega.kg)}` : '<span style="color:#e07b2a">no se encontró la entrega de esa guía</span>')}
+        ${paso('Lotes de finca', r.lotesHacienda.length ? r.lotesHacienda.join(', ') : '—')}
+        ${paso('Parcela', r.parcelas.length
+            ? `<strong style="color:${mixta ? '#e07b2a' : '#2d6a4f'};font-size:.95rem">${r.parcelas.join(' + ')}</strong>${mixta ? ' <span style="color:var(--muted)">(guía mixta: el hallazgo puede venir de cualquiera de las dos)</span>' : ''}`
+            : '<span style="color:#e07b2a">sin parcela asociada</span>')}
+        ${r.kgRecibidos ? paso('Resultado planta', `${fmt.kg(r.kgRecibidos)} recibidos · ${fmt.kg(r.kgExport)} export · ${fmt.kg(r.kgRechazo)} rechazo`) : ''}
+    </div>`;
+}
+
+function _renderRechazoParcela(cicloSel) {
+    const box = document.getElementById('traz-rechazo-parcela');
+    if (!box) return;
+    const r = rechazoPorParcela({
+        poscosecha: filtrarCiclo(DB.get('poscosecha'), cicloSel),
+        entregas:   filtrarCiclo(DB.get('entregas'),   cicloSel)
+    });
+    if (!r.filas.length && !r.mixtas.length && !r.sinGuia.length) {
+        box.innerHTML = `<div style="font-size:.85rem;color:var(--muted)">
+            Aún no hay lotes de Iteranza ligados a una guía. Cárgalos al registrar el informe en <strong>Pos-cosecha</strong> y aquí verás qué parcela genera el rechazo.</div>`;
+        return;
+    }
+    const filas = r.filas.map(f => `<tr>
+            <td><strong>${f.parcela}</strong></td>
+            <td style="text-align:right">${f.lotes}</td>
+            <td style="text-align:right">${fmt.kg(f.kgRecibidos)}</td>
+            <td style="text-align:right">${fmt.kg(f.kgRechazo)}</td>
+            <td style="text-align:right"><span class="badge ${f.pctRechazo > 10 ? 'badge-yellow' : 'badge-green'}">${f.pctRechazo.toFixed(1)}%</span></td>
+        </tr>`).join('');
+    box.innerHTML = `
+        ${r.filas.length ? `<div class="table-wrap"><table>
+            <thead><tr><th>Parcela</th><th style="text-align:right">Lotes</th><th style="text-align:right">Recibido</th><th style="text-align:right">Rechazo</th><th style="text-align:right">%</th></tr></thead>
+            <tbody>${filas}</tbody></table></div>` : ''}
+        ${r.mixtas.length ? `<div style="margin-top:10px;font-size:.8rem;color:var(--muted);border-top:1px solid #f0f0f0;padding-top:8px">
+            <strong style="color:#e07b2a">${r.mixtas.length} lote${r.mixtas.length!==1?'s':''} de guía mixta</strong> — ${fmt.kg(r.mixtas.reduce((s,m)=>s+m.kgRechazo,0))} de rechazo sin atribuir:
+            ${r.mixtas.map(m => `${m.lote} (${m.parcelas.join(' + ')})`).join(' · ')}.
+            <br>Para atribuirlo, despacha guías de una sola parcela.</div>` : ''}
+        ${r.sinGuia.length ? `<div style="margin-top:8px;font-size:.8rem;color:#e07b2a">
+            ${r.sinGuia.length} lote${r.sinGuia.length!==1?'s':''} sin guía válida: ${r.sinGuia.map(s=>s.lote||'(sin nº)').join(', ')} — no se pueden rastrear.</div>` : ''}`;
+}
+
 function renderTrazabilidad() {
     const cicloSel = cicloSeleccionado();
     _poblarSelectorCiclo(document.getElementById('traz-ciclo'));
+    _renderRechazoParcela(cicloSel);
+    buscarLoteIteranza();
     const c = calcularConciliacion({
         cosechas:   filtrarCiclo(DB.get('cosechas'), cicloSel),
         entregas:   filtrarCiclo(DB.get('entregas'), cicloSel),
@@ -7475,6 +7678,101 @@ function calcIteranzaPreview() {
     }
 }
 
+// ── Lotes de Iteranza dentro del informe (puente hacia la parcela) ──
+// La guía se elige de una lista (las entregas ya registradas), no se teclea:
+// así el enlace lote → guía → parcela nunca falla por un dígito mal escrito.
+function _opcionesGuiaIteranza(sel) {
+    const vistas = new Set();
+    const ops = ['<option value="">— elegir guía —</option>'];
+    DB.get('entregas')
+        .filter(e => e.tipoSalida !== 'venta_directa')
+        .sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''))
+        .forEach(e => {
+            const g = (e.guiaIteranza || e.loteIteranza || '').trim();
+            if (!g || vistas.has(g.toUpperCase())) return;
+            vistas.add(g.toUpperCase());
+            const { parcelas } = _parcelasDeEntrega(e);
+            const etiqueta = `${g} · ${fmt.date(e.fecha)}${parcelas.length ? ' · ' + parcelas.join(', ') : ''}`;
+            ops.push(`<option value="${g.replace(/"/g,'&quot;')}" ${_normId(g)===_normId(sel)?'selected':''}>${etiqueta}</option>`);
+        });
+    // Guía guardada que ya no existe entre las entregas: conservarla para no perder el dato
+    if (sel && !vistas.has(_normId(sel))) {
+        ops.push(`<option value="${String(sel).replace(/"/g,'&quot;')}" selected>${sel} (guía no encontrada)</option>`);
+    }
+    return ops.join('');
+}
+
+function _addLoteIteranza(d) {
+    const cont = document.getElementById('it-lotes-lista');
+    if (!cont) return;
+    d = d || {};
+    const row = document.createElement('div');
+    row.className = 'it-lote-row';
+    row.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:8px 10px;background:var(--bg)';
+    row.innerHTML = `
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+            <input type="text" class="itl-lote" placeholder="Nº lote (14454)" value="${d.lote||''}"
+                   style="flex:1;min-width:0;padding:5px 7px" oninput="_recalcLotesIteranza()">
+            <select class="itl-guia" style="flex:1.4;min-width:0;padding:5px 7px" onchange="_recalcLotesIteranza()">${_opcionesGuiaIteranza(d.guia)}</select>
+            <button type="button" class="btn btn-danger-ghost" style="flex-shrink:0" onclick="this.closest('.it-lote-row').remove();_recalcLotesIteranza()">✕</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px">
+            <input type="number" class="itl-rec"  placeholder="kg recib." value="${d.kgRecibidos??''}" step="0.01" min="0" style="padding:5px 6px;font-size:.8rem" oninput="_recalcLotesIteranza()">
+            <input type="number" class="itl-exp"  placeholder="kg export" value="${d.kgExport??''}"   step="0.01" min="0" style="padding:5px 6px;font-size:.8rem" oninput="_recalcLotesIteranza()">
+            <input type="number" class="itl-loc"  placeholder="kg local"  value="${d.kgLocal??''}"    step="0.01" min="0" style="padding:5px 6px;font-size:.8rem" oninput="_recalcLotesIteranza()">
+            <input type="number" class="itl-rech" placeholder="kg rechazo" value="${d.kgRechazo??''}" step="0.01" min="0" style="padding:5px 6px;font-size:.8rem" oninput="_recalcLotesIteranza()">
+        </div>
+        <div class="itl-origen" style="font-size:.72rem;color:var(--muted);margin-top:4px"></div>`;
+    cont.appendChild(row);
+    _recalcLotesIteranza();
+}
+
+function _leerLotesIteranza() {
+    return [...document.querySelectorAll('#it-lotes-lista .it-lote-row')].map(r => ({
+        lote:        r.querySelector('.itl-lote').value.trim(),
+        guia:        r.querySelector('.itl-guia').value.trim(),
+        kgRecibidos: parseFloat(r.querySelector('.itl-rec').value)  || 0,
+        kgExport:    parseFloat(r.querySelector('.itl-exp').value)  || 0,
+        kgLocal:     parseFloat(r.querySelector('.itl-loc').value)  || 0,
+        kgRechazo:   parseFloat(r.querySelector('.itl-rech').value) || 0
+    })).filter(l => l.lote || l.guia);
+}
+
+// Muestra de qué parcela viene cada lote y controla que la suma cuadre con los totales del mes.
+function _recalcLotesIteranza() {
+    const idx = _indiceGuias(DB.get('entregas'));
+    let sRec = 0, sRech = 0;
+    document.querySelectorAll('#it-lotes-lista .it-lote-row').forEach(r => {
+        const guia = r.querySelector('.itl-guia').value.trim();
+        const org  = r.querySelector('.itl-origen');
+        sRec  += parseFloat(r.querySelector('.itl-rec').value)  || 0;
+        sRech += parseFloat(r.querySelector('.itl-rech').value) || 0;
+        const e = idx[_normId(guia)];
+        if (!guia)     { org.innerHTML = '<span style="color:#e07b2a">Sin guía: este lote no se podrá rastrear hasta la parcela.</span>'; return; }
+        if (!e)        { org.innerHTML = '<span style="color:#e07b2a">Guía no encontrada entre las entregas.</span>'; return; }
+        const { parcelas, lotesHacienda } = _parcelasDeEntrega(e);
+        org.innerHTML = parcelas.length === 1
+            ? `→ <strong style="color:#2d6a4f">${parcelas[0]}</strong> · lotes ${lotesHacienda.join(', ')}`
+            : parcelas.length > 1
+                ? `→ <strong style="color:#e07b2a">guía mixta:</strong> ${parcelas.join(', ')} · el rechazo no se podrá atribuir a una sola parcela`
+                : '→ la guía no tiene lotes de cosecha asociados';
+    });
+
+    const kgMes   = parseFloat(document.getElementById('it-kg-planta').value)   || 0;
+    const rechMes = parseFloat(document.getElementById('it-kg-rechazo').value)  || 0;
+    const n = document.querySelectorAll('#it-lotes-lista .it-lote-row').length;
+    const el = document.getElementById('it-lotes-resumen');
+    if (!el) return;
+    if (!n) { el.innerHTML = '<span style="color:var(--muted)">Sin lotes cargados. Sin ellos no hay trazabilidad hasta la parcela.</span>'; return; }
+    const dif  = kgMes   > 0 ? sRec  - kgMes   : 0;
+    const difR = rechMes > 0 ? sRech - rechMes : 0;
+    const ok   = Math.abs(dif) < 0.5 && Math.abs(difR) < 0.5;
+    el.innerHTML = `Suma de ${n} lote${n!==1?'s':''}: <strong>${fmt.num(Math.round(sRec))} kg</strong> recibidos · ${fmt.num(Math.round(sRech))} kg rechazo · ` +
+        (kgMes <= 0 ? '<span style="color:var(--muted)">(llena los totales del mes para comparar)</span>'
+         : ok ? '<strong style="color:#2d6a4f">cuadra con los totales ✓</strong>'
+              : `<strong style="color:#e07b2a">difiere: ${dif ? fmt.num(Math.round(dif))+' kg recibidos' : ''}${dif&&difR?' · ':''}${difR ? fmt.num(Math.round(difR))+' kg rechazo' : ''}</strong>`);
+}
+
 function openIteranza(id) {
     const p = id ? DB.get('poscosecha').find(x => String(x.id) === String(id)) : null;
     const now = new Date();
@@ -7492,6 +7790,18 @@ function openIteranza(id) {
     document.getElementById('it-kg-rechazo').value  = p?.kgRechazo || '';
     document.getElementById('it-valor').value       = p?.valorFacturado || '';
     document.getElementById('it-ids-lotes').value   = p?.idsLotes || '';
+    // Lista de lotes: desde el nuevo formato, o convirtiendo la lista vieja de texto libre
+    const contLotes = document.getElementById('it-lotes-lista');
+    if (contLotes) {
+        contLotes.innerHTML = '';
+        const guardados = Array.isArray(p?.lotesIteranza) ? p.lotesIteranza : null;
+        if (guardados && guardados.length) guardados.forEach(l => _addLoteIteranza(l));
+        else if (p?.idsLotes) {
+            // Formato anterior "14454, 14467, ...": se traen los números, la guía se elige a mano
+            p.idsLotes.split(/[,;]/).map(s => s.trim()).filter(Boolean).forEach(n => _addLoteIteranza({ lote: n }));
+        }
+        _recalcLotesIteranza();
+    }
     document.getElementById('it-notas-extra').value = p?.notas || '';
     calcIteranzaPreview();
 }
@@ -7507,7 +7817,11 @@ function saveIteranza() {
     const kgLocal  = parseFloat(document.getElementById('it-kg-local').value)  || 0;
     const kgRech   = parseFloat(document.getElementById('it-kg-rechazo').value)|| 0;
     const valor    = parseFloat(document.getElementById('it-valor').value);
-    const idsLotes = document.getElementById('it-ids-lotes').value.trim();
+    const lotesIteranza = _leerLotesIteranza();
+    // `idsLotes` se sigue derivando para las vistas/exportes que lo leen (compatibilidad)
+    const idsLotes = lotesIteranza.length
+        ? lotesIteranza.map(l => l.lote).filter(Boolean).join(', ')
+        : document.getElementById('it-ids-lotes').value.trim();
     const notasEx  = document.getElementById('it-notas-extra').value.trim();
 
     if (!fecha)                   return alert('La fecha de liquidación es obligatoria.');
@@ -7544,6 +7858,7 @@ function saveIteranza() {
         precioEfectivo: precio,
         pctExport: pctEx,
         idsLotes:  idsLotes || '',
+        lotesIteranza,                      // puente lote ↔ guía ↔ parcela (kg por lote)
         comprador: 'INTERANZA / INTDEX',
         notas:     notasEx || ''
     };
