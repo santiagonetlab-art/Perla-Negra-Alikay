@@ -863,7 +863,7 @@
     <div class="sidebar-footer" style="display:flex;flex-direction:column;gap:6px">
         <!-- Sello de compilación: subir SIEMPRE al publicar. Sirve para saber, desde la app,
              si el navegador está corriendo el archivo nuevo o uno cacheado. -->
-        <span>v1.9 · build 2026-08-08-D</span>
+        <span>v2.0 · build 2026-08-08-F</span>
         <!-- Herramientas de datos: solo admin (destructivas) -->
         <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
             <div style="display:flex;gap:4px">
@@ -2366,7 +2366,10 @@
         </div>
 
         <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px">
-            <div style="font-size:.75rem;font-weight:700;color:var(--primary);margin-bottom:10px;text-transform:uppercase;letter-spacing:.6px">Kilogramos — del informe PDF</div>
+            <div style="font-size:.75rem;font-weight:700;color:var(--primary);margin-bottom:4px;text-transform:uppercase;letter-spacing:.6px">Kilogramos — del informe PDF</div>
+            <div id="it-kg-auto" style="display:none;font-size:.75rem;color:#2d6a4f;margin-bottom:8px">
+                ✓ Calculados automáticamente desde los lotes de abajo. Para escribirlos a mano, quita los lotes.
+            </div>
             <div class="form-row">
                 <div class="form-group">
                     <label>Kg Planta (total recibido) *</label>
@@ -7735,17 +7738,22 @@ function _leerLotesIteranza() {
         kgExport:    parseFloat(r.querySelector('.itl-exp').value)  || 0,
         kgLocal:     parseFloat(r.querySelector('.itl-loc').value)  || 0,
         kgRechazo:   parseFloat(r.querySelector('.itl-rech').value) || 0
-    })).filter(l => l.lote || l.guia);
+    // Una fila con SOLO el número de lote no aporta nada (ese número ya vive en `idsLotes`)
+    // y ensuciaría Trazabilidad como "lote sin guía". Los informes históricos se abren
+    // convertidos a filas por comodidad, pero si no se les asigna guía ni kg, no se guardan.
+    })).filter(l => l.guia || l.kgRecibidos > 0 || l.kgExport > 0 || l.kgLocal > 0 || l.kgRechazo > 0);
 }
 
 // Muestra de qué parcela viene cada lote y controla que la suma cuadre con los totales del mes.
 function _recalcLotesIteranza() {
     const idx = _indiceGuias(DB.get('entregas'));
-    let sRec = 0, sRech = 0;
+    let sRec = 0, sExp = 0, sLoc = 0, sRech = 0;
     document.querySelectorAll('#it-lotes-lista .it-lote-row').forEach(r => {
         const guia = r.querySelector('.itl-guia').value.trim();
         const org  = r.querySelector('.itl-origen');
         sRec  += parseFloat(r.querySelector('.itl-rec').value)  || 0;
+        sExp  += parseFloat(r.querySelector('.itl-exp').value)  || 0;
+        sLoc  += parseFloat(r.querySelector('.itl-loc').value)  || 0;
         sRech += parseFloat(r.querySelector('.itl-rech').value) || 0;
         const e = idx[_normId(guia)];
         if (!guia)     { org.innerHTML = '<span style="color:#e07b2a">Sin guía: este lote no se podrá rastrear hasta la parcela.</span>'; return; }
@@ -7758,19 +7766,32 @@ function _recalcLotesIteranza() {
                 : '→ la guía no tiene lotes de cosecha asociados';
     });
 
-    const kgMes   = parseFloat(document.getElementById('it-kg-planta').value)   || 0;
-    const rechMes = parseFloat(document.getElementById('it-kg-rechazo').value)  || 0;
-    const n = document.querySelectorAll('#it-lotes-lista .it-lote-row').length;
+    const n  = document.querySelectorAll('#it-lotes-lista .it-lote-row').length;
     const el = document.getElementById('it-lotes-resumen');
+    // Los totales del mes son la SUMA de los lotes: se llenan solos para no pedir el dato dos veces.
+    // Solo se toma el control cuando los lotes traen kg; si vienen sin kg (lista vieja de números
+    // convertida a filas), se dejan como estaban y editables, para no borrar datos ya cargados.
+    const auto  = n > 0 && sRec > 0;
+    const campos = [['it-kg-planta', sRec], ['it-kg-export', sExp], ['it-kg-local', sLoc], ['it-kg-rechazo', sRech]];
+    campos.forEach(([id, v]) => {
+        const inp = document.getElementById(id);
+        if (!inp) return;
+        inp.readOnly = auto;
+        inp.style.background = auto ? '#f1f8f2' : '';
+        inp.style.color      = auto ? '#2d6a4f' : '';
+        if (auto) inp.value = Math.round(v * 100) / 100;
+    });
+    const nLotes = document.getElementById('it-lotes');          // "Nº de lotes": también se deduce
+    if (nLotes) { nLotes.readOnly = auto; nLotes.style.background = auto ? '#f1f8f2' : ''; if (auto) nLotes.value = n; }
+    const aviso = document.getElementById('it-kg-auto');
+    if (aviso) aviso.style.display = auto ? 'block' : 'none';
+    if (auto) calcIteranzaPreview();                              // refrescar precio efectivo
+
     if (!el) return;
     if (!n) { el.innerHTML = '<span style="color:var(--muted)">Sin lotes cargados. Sin ellos no hay trazabilidad hasta la parcela.</span>'; return; }
-    const dif  = kgMes   > 0 ? sRec  - kgMes   : 0;
-    const difR = rechMes > 0 ? sRech - rechMes : 0;
-    const ok   = Math.abs(dif) < 0.5 && Math.abs(difR) < 0.5;
-    el.innerHTML = `Suma de ${n} lote${n!==1?'s':''}: <strong>${fmt.num(Math.round(sRec))} kg</strong> recibidos · ${fmt.num(Math.round(sRech))} kg rechazo · ` +
-        (kgMes <= 0 ? '<span style="color:var(--muted)">(llena los totales del mes para comparar)</span>'
-         : ok ? '<strong style="color:#2d6a4f">cuadra con los totales ✓</strong>'
-              : `<strong style="color:#e07b2a">difiere: ${dif ? fmt.num(Math.round(dif))+' kg recibidos' : ''}${dif&&difR?' · ':''}${difR ? fmt.num(Math.round(difR))+' kg rechazo' : ''}</strong>`);
+    el.innerHTML = auto
+        ? `Suma de ${n} lote${n!==1?'s':''}: <strong>${fmt.num(Math.round(sRec))} kg</strong> recibidos · ${fmt.num(Math.round(sRech))} kg rechazo · <strong style="color:#2d6a4f">los totales de arriba se llenaron solos ✓</strong>`
+        : `<span style="color:var(--muted)">${n} lote${n!==1?'s':''} sin kg. Escribe los kg de cada uno y los totales de arriba se calcularán solos.</span>`;
 }
 
 function openIteranza(id) {
