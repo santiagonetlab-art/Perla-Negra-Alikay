@@ -863,7 +863,7 @@
     <div class="sidebar-footer" style="display:flex;flex-direction:column;gap:6px">
         <!-- Sello de compilación: subir SIEMPRE al publicar. Sirve para saber, desde la app,
              si el navegador está corriendo el archivo nuevo o uno cacheado. -->
-        <span>v1.7 · build 2026-08-08-B</span>
+        <span>v1.8 · build 2026-08-08-C</span>
         <!-- Herramientas de datos: solo admin (destructivas) -->
         <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
             <div style="display:flex;gap:4px">
@@ -4768,18 +4768,24 @@ function _recalcValorEntrega() {
 
 // Fila del checklist de lotes — con entrada de gavetas a despachar (permite despacho parcial).
 // max = gavetas disponibles del lote para ESTA entrega; val = gavetas a despachar (default = max).
-function _chkRowEntrega(lote, parcela, cid, fechaTxt, max, val, checked) {
+function _chkRowEntrega(lote, parcela, cid, fechaTxt, max, val, checked, envio, despOtros) {
     return `
-        <label style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;font-size:.85rem">
-            <input type="checkbox" class="e-lote-chk" style="width:auto;margin:0;flex-shrink:0"
-                   data-lote="${lote}" data-parcela="${(parcela||'').replace(/"/g,'&quot;')}"
-                   data-cid="${cid}" data-max="${max}" ${checked ? 'checked' : ''}
-                   onchange="_onToggleLoteEntrega(this)">
-            <span style="flex:1;min-width:0"><strong>${lote}</strong> · ${parcela||'—'}
-                <span style="color:var(--muted)">· ${fechaTxt}</span></span>
-            <input type="number" class="e-lote-gav" style="width:60px;padding:4px 6px;flex-shrink:0"
-                   min="1" max="${max}" value="${val}" ${checked ? '' : 'disabled'} oninput="_recalcGavEntrega()">
-            <span style="color:var(--muted);font-size:.75rem;white-space:nowrap;flex-shrink:0">/ ${max} gav</span>
+        <label style="display:block;padding:7px 9px;border-radius:6px;font-size:.85rem">
+            <span style="display:flex;align-items:center;gap:8px">
+                <input type="checkbox" class="e-lote-chk" style="width:auto;margin:0;flex-shrink:0"
+                       data-lote="${lote}" data-parcela="${(parcela||'').replace(/"/g,'&quot;')}"
+                       data-cid="${cid}" data-max="${max}"
+                       data-envio="${envio != null ? envio : max}" data-desp="${despOtros || 0}"
+                       ${checked ? 'checked' : ''}
+                       onchange="_onToggleLoteEntrega(this)">
+                <span style="flex:1;min-width:0"><strong>${lote}</strong> · ${parcela||'—'}
+                    <span style="color:var(--muted)">· ${fechaTxt}</span></span>
+                <input type="number" class="e-lote-gav" style="width:60px;padding:4px 6px;flex-shrink:0"
+                       min="1" max="${max}" value="${val}" ${checked ? '' : 'disabled'} oninput="_recalcGavEntrega()">
+                <span style="color:var(--muted);font-size:.75rem;white-space:nowrap;flex-shrink:0">/ ${max}</span>
+            </span>
+            <!-- saldo del lote, se recalcula en vivo -->
+            <span class="e-lote-saldo" style="display:block;padding-left:24px;font-size:.72rem;color:var(--muted);margin-top:2px"></span>
         </label>`;
 }
 
@@ -4810,12 +4816,13 @@ function _renderLotesChecklistEntrega(entregaEdit) {
         if (restante <= 0 && !marcado) return; // agotado y no es de esta entrega → ocultar
         const max = Math.max(restante, marcado ? (parseInt(detalle.gavetas)||0) : 0);
         const val = marcado ? Math.min(parseInt(detalle.gavetas)||max, max) : max;
-        filas.push(_chkRowEntrega(c.loteHacienda, c.parcela, c.id, fmt.date(c.fecha), max, val, marcado));
+        filas.push(_chkRowEntrega(c.loteHacienda, c.parcela, c.id, fmt.date(c.fecha), max, val, marcado,
+                                  envio, despOtros[c.loteHacienda] || 0));
     });
     // Lotes de la entrega cuya cosecha ya no existe: conservarlos marcados (no perder datos)
     misLotes.forEach(l => {
         const g = parseInt(l.gavetas)||0;
-        filas.push(_chkRowEntrega(l.lote, l.parcela, l.cosechaId||'', '(cosecha eliminada)', g, g, true));
+        filas.push(_chkRowEntrega(l.lote, l.parcela, l.cosechaId||'', '(cosecha eliminada)', g, g, true, g, 0));
     });
 
     cont.innerHTML = filas.length ? filas.join('')
@@ -4833,15 +4840,45 @@ function _onToggleLoteEntrega(chk) {
     _recalcGavEntrega();
 }
 
-// Sumar las gavetas a despachar de los lotes marcados (el kg es manual)
+// Saldo en vivo: por lote (cosechado / ya despachado / en esta guía / lo que queda)
+// y el total de la guía. Así no hay que sumar a mano para saber cuántas gavetas faltan.
 function _recalcGavEntrega() {
-    let suma = 0, n = 0;
-    document.querySelectorAll('#e-lotes-checklist .e-lote-chk:checked').forEach(chk => {
-        const g = parseInt(chk.closest('label').querySelector('.e-lote-gav')?.value) || 0;
+    let suma = 0, n = 0, pendiente = 0, disponibleSinMarcar = 0;
+    document.querySelectorAll('#e-lotes-checklist .e-lote-chk').forEach(chk => {
+        const row     = chk.closest('label');
+        const saldoEl = row.querySelector('.e-lote-saldo');
+        const envio   = parseInt(chk.dataset.envio) || 0;   // gavetas de envío del lote (cosecha − desecho)
+        const desp    = parseInt(chk.dataset.desp)  || 0;   // ya despachadas por OTRAS guías
+        const max     = parseInt(chk.dataset.max)   || 0;   // disponible para esta guía
+
+        if (!chk.checked) {
+            disponibleSinMarcar += max;
+            if (saldoEl) saldoEl.innerHTML = desp > 0
+                ? `cosechado ${envio} · ya despachado ${desp} · <strong>quedan ${max}</strong>`
+                : `cosechado ${envio} gav`;
+            return;
+        }
+        const g = parseInt(row.querySelector('.e-lote-gav')?.value) || 0;
         suma += g; n++;
+        const queda = Math.max(0, max - g);
+        pendiente += queda;
+        if (saldoEl) saldoEl.innerHTML =
+            `cosechado ${envio}${desp > 0 ? ` · ya despachado ${desp}` : ''} · en esta guía ${g} · ` +
+            (queda > 0 ? `<strong style="color:#e07b2a">quedan ${queda} en finca</strong>`
+                       : `<strong style="color:#2d6a4f">lote completo ✓</strong>`);
     });
+
     const el = document.getElementById('e-gav-envio');
-    if (el) el.textContent = n ? `${n} lote(s) · ${suma} gavetas a despachar` : '';
+    if (!el) return;
+    if (!n) {
+        el.innerHTML = disponibleSinMarcar > 0
+            ? `<span style="color:#e07b2a">Sin lotes marcados · hay ${disponibleSinMarcar} gav disponibles en finca</span>` : '';
+        return;
+    }
+    el.innerHTML = `<strong style="font-size:.85rem">${suma} gavetas</strong> en esta guía · ${n} lote${n!==1?'s':''}` +
+        (pendiente > 0 ? ` · <strong style="color:#e07b2a">quedan ${pendiente} gav sin despachar</strong>`
+                       : ` · <strong style="color:#2d6a4f">lotes completos ✓</strong>`) +
+        (disponibleSinMarcar > 0 ? `<br><span style="color:var(--muted)">Además hay ${disponibleSinMarcar} gav en otros lotes sin marcar.</span>` : '');
 }
 
 function saveEntrega() {
