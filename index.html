@@ -820,21 +820,24 @@
 
     <div class="sidebar-footer" style="display:flex;flex-direction:column;gap:6px">
         <span>v1.5 · Firebase Firestore</span>
-        <div style="display:flex;gap:4px">
-            <button onclick="exportarBackup()" title="Descargar copia de seguridad"
-                style="flex:1;background:rgba(255,255,255,.08);border:none;color:rgba(255,255,255,.6);padding:5px 6px;border-radius:6px;font-size:.72rem;cursor:pointer">
-                💾 Exportar
+        <!-- Herramientas de datos: solo admin (destructivas) -->
+        <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;gap:4px">
+                <button onclick="exportarBackup()" title="Descargar copia de seguridad"
+                    style="flex:1;background:rgba(255,255,255,.08);border:none;color:rgba(255,255,255,.6);padding:5px 6px;border-radius:6px;font-size:.72rem;cursor:pointer">
+                    💾 Exportar
+                </button>
+                <label title="Restaurar desde copia de seguridad"
+                    style="flex:1;background:rgba(255,255,255,.08);color:rgba(255,255,255,.6);padding:5px 6px;border-radius:6px;font-size:.72rem;cursor:pointer;text-align:center;display:flex;align-items:center;justify-content:center">
+                    📥 Importar
+                    <input type="file" accept=".json" style="display:none" onchange="importarBackup(event)">
+                </label>
+            </div>
+            <button onclick="recuperarDatosLocales()" title="Migrar datos guardados en este dispositivo a Firebase"
+                style="background:rgba(255,165,0,.15);border:1px solid rgba(255,165,0,.3);color:rgba(255,200,0,.85);padding:5px 6px;border-radius:6px;font-size:.72rem;cursor:pointer;text-align:left">
+                📦 Recuperar datos locales
             </button>
-            <label title="Restaurar desde copia de seguridad"
-                style="flex:1;background:rgba(255,255,255,.08);color:rgba(255,255,255,.6);padding:5px 6px;border-radius:6px;font-size:.72rem;cursor:pointer;text-align:center;display:flex;align-items:center;justify-content:center">
-                📥 Importar
-                <input type="file" accept=".json" style="display:none" onchange="importarBackup(event)">
-            </label>
         </div>
-        <button onclick="recuperarDatosLocales()" title="Migrar datos guardados en este dispositivo a Firebase"
-            style="background:rgba(255,165,0,.15);border:1px solid rgba(255,165,0,.3);color:rgba(255,200,0,.85);padding:5px 6px;border-radius:6px;font-size:.72rem;cursor:pointer;text-align:left">
-            📦 Recuperar datos locales
-        </button>
         <button onclick="cerrarSesionPIN()"
             style="background:rgba(255,255,255,.08);border:none;color:rgba(255,255,255,.5);padding:6px 10px;border-radius:6px;font-size:.72rem;cursor:pointer;text-align:left">
             🔒 Cerrar sesión
@@ -4329,7 +4332,7 @@ function renderLabores() {
             <td>${l.trabajadores || '—'}</td>
             <td>${l.costo ? fmt.money(l.costo) : '—'}</td>
             <td>${estadoBadge(l.estado)}</td>
-            <td><button class="btn btn-danger-ghost" onclick="del('labores', ${l.id})">✕</button></td>
+            <td>${esAdmin() ? `<button class="btn btn-danger-ghost" onclick="del('labores', ${l.id})">✕</button>` : ''}</td>
         </tr>`).join('');
 }
 
@@ -4369,7 +4372,7 @@ function renderCosechas() {
             <td>${envio || '—'}</td>
             <td>${pctDes != null && desGav ? `<span class="badge ${pctDes>15?'badge-yellow':'badge-green'}">${pctDes.toFixed(0)}%</span>` : '—'}</td>
             <td style="max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${c.notas||''}">${c.notas || '—'}</td>
-            <td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="openCosecha(${c.id})" title="Editar" style="margin-right:4px">✏️</button><button class="btn btn-danger-ghost" onclick="del('cosechas', ${c.id})">✕</button></td>
+            <td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="openCosecha(${c.id})" title="Editar" style="margin-right:4px">✏️</button>${esAdmin() ? `<button class="btn btn-danger-ghost" onclick="del('cosechas', ${c.id})">✕</button>` : ''}</td>
         </tr>`;
     }).join('') + `<tr style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
         <td colspan="3" style="padding:10px 12px">TOTAL</td>
@@ -4792,7 +4795,7 @@ function renderEntregas() {
             <td><strong>${fmt.kg(e.kg)}</strong></td>
             <td style="font-size:.85rem">${e.destino || '—'}</td>
             <td style="white-space:nowrap">${valorCell}</td>
-            <td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="openEntrega(${e.id})" title="Editar" style="margin-right:4px">✏️</button><button class="btn btn-danger-ghost" onclick="del('entregas', ${e.id})">✕</button></td>
+            <td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="openEntrega(${e.id})" title="Editar" style="margin-right:4px">✏️</button>${esAdmin() ? `<button class="btn btn-danger-ghost" onclick="del('entregas', ${e.id})">✕</button>` : ''}</td>
         </tr>`;
     }).join('') + `<tr style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
         <td colspan="4" style="padding:10px 12px">TOTAL</td>
@@ -8421,9 +8424,13 @@ function entrarConRol() {
     initFirestore().then(() => { migrarIteranzaAPoscosecha(); migrarLotesCosecha(); render(); });
 }
 
+function esAdmin() { return _rolActual === 'admin'; }
+
 function aplicarRol(rol) {
-    const soloTrabajador = ['dashboard','observaciones','muestreo'];
+    // Módulos que el equipo (trabajador) puede ver/usar
+    const soloTrabajador = ['dashboard','observaciones','muestreo','cosechas','entregas','labores'];
     const todosModulos   = document.querySelectorAll('.nav-item[data-page]');
+    const adminTools     = document.getElementById('footer-admin-tools');
 
     if (rol === 'trabajador') {
         // Ocultar módulos de admin
@@ -8432,6 +8439,7 @@ function aplicarRol(rol) {
             el.style.display = soloTrabajador.includes(pg) ? '' : 'none';
         });
         document.getElementById('nav-admin-group').style.display = 'none';
+        if (adminTools) adminTools.style.display = 'none';   // exportar/importar/recuperar: solo admin
         // Ir directo a observaciones
         document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
         document.getElementById('page-observaciones').classList.add('active');
@@ -8442,6 +8450,7 @@ function aplicarRol(rol) {
         // Admin: mostrar todo
         todosModulos.forEach(el => { el.style.display = ''; });
         document.getElementById('nav-admin-group').style.display = '';
+        if (adminTools) adminTools.style.display = '';
     }
 }
 
