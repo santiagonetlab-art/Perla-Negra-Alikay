@@ -436,35 +436,70 @@
         .inv-status-medium { color: var(--warning); font-weight: 600; }
 
         /* ── RESPONSIVE ── */
+        /* ── Móvil: barra superior + fondo del cajón (ocultos en desktop) ── */
+        .mobile-topbar { display: none; }
+        .sidebar-backdrop { display: none; }
+        .hamburger { background: none; border: none; color: #fff; font-size: 1.5rem; cursor: pointer; padding: 4px 10px; line-height: 1; }
+        .mobile-title { font-weight: 700; font-size: 1rem; }
+
         @media (max-width: 800px) {
+            /* Barra superior fija con botón hamburguesa */
+            .mobile-topbar {
+                display: flex; align-items: center; gap: 10px;
+                position: fixed; top: 0; left: 0; right: 0; height: 52px;
+                background: var(--primary-dark); color: #fff; z-index: 1000;
+                padding: 0 12px; box-shadow: 0 1px 6px rgba(0,0,0,.2);
+            }
+            /* Sidebar → cajón deslizable (mantiene su diseño vertical) */
             .sidebar {
-                width: 100%;
-                height: auto;
-                top: auto;
-                bottom: 0;
-                flex-direction: row;
-                overflow-x: auto;
-                overflow-y: hidden;
+                width: 82%; max-width: 300px; height: 100%;
+                top: 0; left: 0; bottom: auto;
+                transform: translateX(-100%);
+                transition: transform .25s ease;
+                z-index: 1100;
             }
-            .sidebar-brand, .nav-group .nav-label, .sidebar-footer { display: none; }
-            .nav-group { display: flex; padding: 0; }
-            .nav-item {
-                flex-direction: column;
-                gap: 2px;
-                padding: 8px 14px;
-                font-size: .65rem;
-                border-left: none;
-                border-top: 3px solid transparent;
-                min-width: 60px;
-                justify-content: center;
+            .sidebar.open { transform: translateX(0); box-shadow: 0 0 30px rgba(0,0,0,.4); }
+            /* Fondo oscuro cuando el cajón está abierto */
+            .sidebar-backdrop {
+                display: block; position: fixed; inset: 0;
+                background: rgba(0,0,0,.45); z-index: 1050;
+                opacity: 0; pointer-events: none; transition: opacity .25s;
             }
-            .nav-item.active { border-left: none; border-top-color: var(--accent); }
-            .nav-item .icon { font-size: 1.3rem; width: auto; }
-            .main { margin-left: 0; margin-bottom: 68px; padding: 16px; }
+            .sidebar-backdrop.open { opacity: 1; pointer-events: auto; }
+
+            .main { margin-left: 0; margin-bottom: 0; padding: 16px; padding-top: 68px; }
             .form-row { grid-template-columns: 1fr; }
             .dash-grid { grid-template-columns: 1fr; }
             .stats-grid { grid-template-columns: repeat(2, 1fr); }
             .charts-grid { grid-template-columns: 1fr; }
+
+            /* Encabezados: que quepan y sean táctiles */
+            .page-header h2 { font-size: 1.2rem; }
+            .header-actions { flex-wrap: wrap; }
+            .header-actions select, .header-actions .btn { font-size: .78rem; }
+
+            /* Tablas marcadas con .tabla-cards → tarjetas apiladas (sin scroll horizontal) */
+            .tabla-cards thead { display: none; }
+            .tabla-cards, .tabla-cards tbody, .tabla-cards tr, .tabla-cards td { display: block; width: 100%; }
+            .tabla-cards tr {
+                border: 1px solid var(--border); border-radius: 10px;
+                margin-bottom: 10px; padding: 4px 12px; background: var(--card);
+            }
+            .tabla-cards td {
+                display: flex; justify-content: space-between; align-items: baseline; gap: 14px;
+                padding: 7px 0; border: none; border-bottom: 1px solid var(--border);
+                text-align: right;
+                white-space: normal !important; overflow: visible !important; max-width: none !important;
+            }
+            .tabla-cards td:last-child { border-bottom: none; }
+            .tabla-cards td::before {
+                content: attr(data-label); font-weight: 600; color: var(--muted);
+                text-align: left; flex-shrink: 0; font-size: .78rem;
+            }
+            .tabla-cards td:empty { display: none; }
+            /* Fila TOTAL como encabezado de tarjeta */
+            .tabla-cards tr.fila-total { background: #f0f9f0; }
+            .tabla-cards tr.fila-total td[colspan] { justify-content: flex-start; font-weight: 700; color: var(--primary-dark); }
         }
 
         /* ── PIN LOGIN ───────────────────────────────────── */
@@ -728,6 +763,13 @@
 <!-- ═══════════════════════════════════════════════════════════
      SIDEBAR
 ════════════════════════════════════════════════════════════ -->
+<!-- Barra superior (solo móvil) -->
+<div class="mobile-topbar">
+    <button class="hamburger" onclick="toggleSidebar()" aria-label="Abrir menú">☰</button>
+    <span class="mobile-title">🥑 Mi Hacienda</span>
+</div>
+<div class="sidebar-backdrop" onclick="toggleSidebar(false)"></div>
+
 <nav class="sidebar">
     <div class="sidebar-brand">
         <h1>🥑 Mi Hacienda</h1>
@@ -926,7 +968,7 @@
         </div>
         <div class="card">
             <div class="table-wrap">
-                <table>
+                <table class="tabla-cards">
                     <thead>
                         <tr>
                             <th>Fecha</th>
@@ -958,9 +1000,10 @@
         <p style="font-size:.82rem;color:var(--muted);margin:-6px 0 14px">
             Volumen de fruta bajada del árbol, por parcela. Para los resultados de planta (export, local, rechazo, liquidación) usa el módulo <strong>📦 Pos-cosecha</strong>.
         </p>
+        <div id="cos-alerta-formato"></div>
         <div class="card">
             <div class="table-wrap">
-                <table>
+                <table class="tabla-cards">
                     <thead>
                         <tr>
                             <th>Fecha</th>
@@ -996,7 +1039,7 @@
         <div id="entregas-resumen" class="stats-grid" style="margin-bottom:18px"></div>
         <div class="card">
             <div class="table-wrap">
-                <table>
+                <table class="tabla-cards">
                     <thead>
                         <tr>
                             <th>Fecha</th>
@@ -3203,6 +3246,15 @@ function mostrarCargando(mostrar, msg) {
     if (txt && msg) txt.textContent = msg;
 }
 
+// ─── NAVEGACIÓN MÓVIL (cajón hamburguesa) ──────────────────
+function toggleSidebar(force) {
+    const sb = document.querySelector('.sidebar');
+    const bd = document.querySelector('.sidebar-backdrop');
+    const abrir = (typeof force === 'boolean') ? force : !sb.classList.contains('open');
+    sb.classList.toggle('open', abrir);
+    if (bd) bd.classList.toggle('open', abrir);
+}
+
 // ─── NAVIGATION ────────────────────────────────────────────
 document.querySelectorAll('.nav-item').forEach(el => {
     el.addEventListener('click', () => {
@@ -3211,6 +3263,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
         document.getElementById('page-' + page).classList.add('active');
         el.classList.add('active');
+        toggleSidebar(false);   // cerrar el cajón al navegar (móvil)
         render();
         if (page === 'entregas')      renderEntregas();
         if (page === 'poscosecha')    renderPoscosecha();
@@ -4325,19 +4378,34 @@ function renderLabores() {
     }
     tbody.innerHTML = data.map(l => `
         <tr>
-            <td style="white-space:nowrap">${fmt.date(l.fecha)}</td>
-            <td>${l.tipo}</td>
-            <td>${l.parcela}</td>
-            <td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${l.descripcion || '—'}</td>
-            <td>${l.trabajadores || '—'}</td>
-            <td>${l.costo ? fmt.money(l.costo) : '—'}</td>
-            <td>${estadoBadge(l.estado)}</td>
+            <td data-label="Fecha" style="white-space:nowrap">${fmt.date(l.fecha)}</td>
+            <td data-label="Tipo">${l.tipo}</td>
+            <td data-label="Parcela">${l.parcela}</td>
+            <td data-label="Descripción" style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${l.descripcion || '—'}</td>
+            <td data-label="Trabajadores">${l.trabajadores || '—'}</td>
+            <td data-label="Costo">${l.costo ? fmt.money(l.costo) : '—'}</td>
+            <td data-label="Estado">${estadoBadge(l.estado)}</td>
             <td>${esAdmin() ? `<button class="btn btn-danger-ghost" onclick="del('labores', ${l.id})">✕</button>` : ''}</td>
         </tr>`).join('');
 }
 
 function renderCosechas() {
     _poblarSelectorCiclo(document.getElementById('cos-ciclo'));
+    // Aviso: cosechas del formato anterior (se medía en kg) que quedaron SIN gavetas.
+    // No suman en gráficas ni rentabilidad porque la producción hoy se mide en gavetas.
+    const boxFmt = document.getElementById('cos-alerta-formato');
+    if (boxFmt) {
+        const sinGav = DB.get('cosechas').filter(c => !(parseInt(c.gavetas) > 0))
+                                         .sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''));
+        boxFmt.innerHTML = !sinGav.length ? '' : `<div class="card" style="padding:12px 16px;border-left:4px solid #e07b2a;margin-bottom:14px">
+            <div style="font-weight:700;margin-bottom:6px;font-size:.92rem">⚠️ ${sinGav.length} cosecha${sinGav.length!==1?'s':''} sin gavetas (formato anterior)</div>
+            <div style="font-size:.84rem;color:var(--muted);margin-bottom:8px">Se registraron cuando la cosecha se medía en kg. Como no tienen gavetas, <strong>no aparecen en las gráficas de producción ni en rentabilidad</strong>. Ábrelas y escribe las gavetas reales.</div>
+            ${sinGav.map(c => `<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:6px 0;border-top:1px solid #f0f0f0;font-size:.86rem">
+                <div>${fmt.date(c.fecha)} · <strong>${c.loteHacienda || 'sin lote'}</strong> · ${c.parcela || 'sin parcela'}${c.kg ? ` <span style="color:var(--muted)">— tenía ${fmt.kg(c.kg)}</span>` : ''}</div>
+                <button class="btn btn-outline btn-sm" onclick="openCosecha(${c.id})">✏️ Completar</button>
+            </div>`).join('')}
+        </div>`;
+    }
     const data  = filtrarCiclo(DB.get('cosechas'), cicloSeleccionado());
     const tbody = document.getElementById('tbody-cosechas');
     if (!data.length) {
@@ -4364,22 +4432,22 @@ function renderCosechas() {
         }
         const loteCell = c.loteHacienda ? `<strong>${c.loteHacienda}</strong>${badge}` : '—';
         return `<tr>
-            <td style="white-space:nowrap">${fmt.date(c.fecha)}</td>
-            <td style="white-space:nowrap">${loteCell}</td>
-            <td>${c.parcela || '—'}</td>
-            <td><strong>${gav || '—'}</strong></td>
-            <td>${desGav ? desGav : '—'}</td>
-            <td>${envio || '—'}</td>
-            <td>${pctDes != null && desGav ? `<span class="badge ${pctDes>15?'badge-yellow':'badge-green'}">${pctDes.toFixed(0)}%</span>` : '—'}</td>
-            <td style="max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${c.notas||''}">${c.notas || '—'}</td>
+            <td data-label="Fecha" style="white-space:nowrap">${fmt.date(c.fecha)}</td>
+            <td data-label="Lote" style="white-space:nowrap">${loteCell}</td>
+            <td data-label="Parcela">${c.parcela || '—'}</td>
+            <td data-label="Gavetas"><strong>${gav || '—'}</strong></td>
+            <td data-label="Desecho/abono">${desGav ? desGav : '—'}</td>
+            <td data-label="Envío (gav)">${envio || '—'}</td>
+            <td data-label="% Desecho">${pctDes != null && desGav ? `<span class="badge ${pctDes>15?'badge-yellow':'badge-green'}">${pctDes.toFixed(0)}%</span>` : '—'}</td>
+            <td data-label="Notas" style="max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${c.notas||''}">${c.notas || '—'}</td>
             <td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="openCosecha(${c.id})" title="Editar" style="margin-right:4px">✏️</button>${esAdmin() ? `<button class="btn btn-danger-ghost" onclick="del('cosechas', ${c.id})">✕</button>` : ''}</td>
         </tr>`;
-    }).join('') + `<tr style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
+    }).join('') + `<tr class="fila-total" style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
         <td colspan="3" style="padding:10px 12px">TOTAL</td>
-        <td>${totalGav || '—'}</td>
-        <td>${totalDesGav || '—'}</td>
-        <td>${totalEnvio || '—'}</td>
-        <td>${totalDesGav ? pctDesTot.toFixed(0) + '%' : '—'}</td>
+        <td data-label="Gavetas">${totalGav || '—'}</td>
+        <td data-label="Desecho/abono">${totalDesGav || '—'}</td>
+        <td data-label="Envío (gav)">${totalEnvio || '—'}</td>
+        <td data-label="% Desecho">${totalDesGav ? pctDesTot.toFixed(0) + '%' : '—'}</td>
         <td colspan="2"></td>
     </tr>`;
 }
@@ -4788,20 +4856,20 @@ function renderEntregas() {
             ? `<strong style="color:var(--primary)">${fmt.money(e.valorTotal)}</strong>${e.precioKg ? `<br><small style="color:#888">$${(+e.precioKg).toFixed(2)}/kg</small>` : ''}`
             : '<small style="color:#888">→ pos-cosecha</small>';
         return `<tr>
-            <td style="white-space:nowrap">${fmt.date(e.fecha)}</td>
-            <td style="white-space:nowrap">${tipoCell}</td>
-            <td style="font-size:.85rem"><strong>${lotesCell}</strong></td>
-            <td style="font-size:.85rem">${parcelasCell}</td>
-            <td><strong>${fmt.kg(e.kg)}</strong></td>
-            <td style="font-size:.85rem">${e.destino || '—'}</td>
-            <td style="white-space:nowrap">${valorCell}</td>
+            <td data-label="Fecha" style="white-space:nowrap">${fmt.date(e.fecha)}</td>
+            <td data-label="Tipo" style="white-space:nowrap">${tipoCell}</td>
+            <td data-label="Lotes" style="font-size:.85rem"><strong>${lotesCell}</strong></td>
+            <td data-label="Parcelas" style="font-size:.85rem">${parcelasCell}</td>
+            <td data-label="Kg"><strong>${fmt.kg(e.kg)}</strong></td>
+            <td data-label="Destino" style="font-size:.85rem">${e.destino || '—'}</td>
+            <td data-label="Valor" style="white-space:nowrap">${valorCell}</td>
             <td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="openEntrega(${e.id})" title="Editar" style="margin-right:4px">✏️</button>${esAdmin() ? `<button class="btn btn-danger-ghost" onclick="del('entregas', ${e.id})">✕</button>` : ''}</td>
         </tr>`;
-    }).join('') + `<tr style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
+    }).join('') + `<tr class="fila-total" style="background:#f9fdf9;border-top:2px solid #e8f5e9;font-weight:700">
         <td colspan="4" style="padding:10px 12px">TOTAL</td>
-        <td>${fmt.kg(totalKg)}</td>
+        <td data-label="Kg">${fmt.kg(totalKg)}</td>
         <td></td>
-        <td style="color:var(--primary)">${ingresoDirecto>0 ? fmt.money(ingresoDirecto) : ''}</td>
+        <td data-label="Valor" style="color:var(--primary)">${ingresoDirecto>0 ? fmt.money(ingresoDirecto) : ''}</td>
         <td></td>
     </tr>`;
 }
@@ -5142,9 +5210,14 @@ function renderGraficas() {
     const catMap = {};
     gasF.forEach(g => { catMap[g.categoria] = (catMap[g.categoria] || 0) + (parseFloat(g.monto) || 0); });
 
-    // gavetas por parcela
+    // gavetas por parcela — solo parcelas CON gavetas (evita barras en 0 de registros viejos)
     const parMap = {};
-    cosF.forEach(c => { parMap[c.parcela] = (parMap[c.parcela] || 0) + (parseInt(c.gavetas) || 0); });
+    cosF.forEach(c => {
+        const g = parseInt(c.gavetas) || 0;
+        if (g <= 0) return;                          // formato anterior (kg sin gavetas): no grafica
+        const p = c.parcela || 'Sin parcela';
+        parMap[p] = (parMap[p] || 0) + g;
+    });
 
     // labores por tipo
     const labMap = {};
@@ -5205,7 +5278,7 @@ function renderGraficas() {
     chartInstances['chart-parcela-kg'] = new Chart(document.getElementById('chart-parcela-kg'), {
         type: 'bar',
         data: {
-            labels: parLabels.length ? parLabels : ['Sin datos'],
+            labels: parLabels.length ? parLabels : ['Sin gavetas registradas en este ciclo'],
             datasets: [{ label: 'gavetas', data: parLabels.length ? Object.values(parMap) : [0], backgroundColor: COLORS, borderRadius: 5 }]
         },
         options: { ...baseOpts, plugins: { ...baseOpts.plugins, legend: { display: false } }, indexAxis: 'y' }
