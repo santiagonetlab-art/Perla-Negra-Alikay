@@ -4745,10 +4745,18 @@ function renderEntregas() {
     const totalRecibido = filtrarCiclo(DB.get('poscosecha'), cicloSel).reduce((s,p) => s + (parseFloat(p.kgRecibidos)||0), 0);
     const merma    = kgIteranza - totalRecibido;   // solo canal Iteranza
     const mermaPct = kgIteranza > 0 ? (merma / kgIteranza * 100) : 0;
+
+    // Desecho en finca (triaje, en gavetas) — cascada de pérdida, del mismo ciclo
+    const cosCiclo    = filtrarCiclo(DB.get('cosechas'), cicloSel);
+    const desechoGav  = cosCiclo.reduce((s,c) => s + (parseInt(c.desechoGavetas)||0), 0);
+    const totalGavCos = cosCiclo.reduce((s,c) => s + (parseInt(c.gavetas)||0), 0);
+    const pctDesecho  = totalGavCos > 0 ? (desechoGav / totalGavCos * 100) : 0;
+
     if (resum) {
         resum.innerHTML = `
             <div class="stat-card highlight"><div class="s-label">Salidas totales</div><div class="s-value">${fmt.num(Math.round(totalKg))}<span style="font-size:1rem;font-weight:400"> kg</span></div><div class="s-sub">${fmt.num(Math.round(kgIteranza))} Iteranza · ${fmt.num(Math.round(kgDirecta))} directa</div></div>
-            <div class="stat-card ${merma>0?'warn':''}"><div class="s-label">Merma campo → planta</div><div class="s-value" style="font-size:1.5rem">${totalRecibido>0 ? fmt.num(Math.round(merma))+' kg' : '—'}</div><div class="s-sub">${totalRecibido>0 ? mermaPct.toFixed(1)+'% (solo Iteranza)' : 'sin datos de planta'}</div></div>
+            <div class="stat-card ${desechoGav>0?'warn':''}"><div class="s-label">Desecho en finca</div><div class="s-value">${desechoGav ? fmt.num(desechoGav) : '0'}<span style="font-size:1rem;font-weight:400"> gav</span></div><div class="s-sub">${totalGavCos>0 ? pctDesecho.toFixed(1)+'% del cosechado · a abono' : 'triaje en finca'}</div></div>
+            <div class="stat-card ${merma>0?'warn':''}"><div class="s-label">Merma transporte</div><div class="s-value" style="font-size:1.5rem">${totalRecibido>0 ? fmt.num(Math.round(merma))+' kg' : '—'}</div><div class="s-sub">${totalRecibido>0 ? 'entregado → planta · '+mermaPct.toFixed(1)+'%' : 'entregado → planta (sin datos de planta)'}</div></div>
             <div class="stat-card"><div class="s-label">Ingreso venta directa</div><div class="s-value" style="font-size:1.5rem">${fmt.money(ingresoDirecto)}</div><div class="s-sub">${nDirectas} venta${nDirectas!==1?'s':''} directa${nDirectas!==1?'s':''}</div></div>`;
     }
 
