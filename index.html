@@ -861,7 +861,9 @@
     </div>
 
     <div class="sidebar-footer" style="display:flex;flex-direction:column;gap:6px">
-        <span>v1.5 · Firebase Firestore</span>
+        <!-- Sello de compilación: subir SIEMPRE al publicar. Sirve para saber, desde la app,
+             si el navegador está corriendo el archivo nuevo o uno cacheado. -->
+        <span>v1.7 · build 2026-08-08-B</span>
         <!-- Herramientas de datos: solo admin (destructivas) -->
         <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
             <div style="display:flex;gap:4px">
@@ -1001,6 +1003,7 @@
             Volumen de fruta bajada del árbol, por parcela. Para los resultados de planta (export, local, rechazo, liquidación) usa el módulo <strong>📦 Pos-cosecha</strong>.
         </p>
         <div id="cos-alerta-formato"></div>
+        <div id="cos-resumen-kg"></div>
         <div class="card">
             <div class="table-wrap">
                 <table class="tabla-cards">
@@ -3982,6 +3985,54 @@ function ingresoTotales(poscosechaArr, entregasArr) {
     return { iteranza, directa, total: iteranza + directa };
 }
 
+// ─── KG ESTIMADOS A PARTIR DE GAVETAS — regla única ────────
+// En la finca NO se pesa: la cosecha se mide en gavetas. Para comparar contra
+// referencias técnicas (t/ha, kg/árbol) hace falta kg, pero SIEMPRE como ESTIMACIÓN.
+// El factor NO se asume: se MIDE dividiendo los kg realmente pesados en las entregas
+// entre las gavetas despachadas en esas mismas entregas. 16,5 es solo el respaldo
+// inicial mientras no haya ninguna entrega pesada.
+// REGLA DURA: el kg estimado nunca entra en dinero (ingresos/rentabilidad $) ni en
+// mermas/conciliación — esas se calculan con kg REALES pesados.
+const KG_GAVETA_DEFECTO = 16.5;
+
+function factorKgGaveta(entregasArr, respaldo) {
+    const base = (typeof respaldo === 'number' && respaldo > 0) ? respaldo : KG_GAVETA_DEFECTO;
+    let kg = 0, gav = 0, n = 0;
+    const acum = {};   // por parcela
+    (entregasArr || []).forEach(e => {
+        const det = Array.isArray(e.lotesDetalle) ? e.lotesDetalle : [];
+        const g = det.reduce((s, l) => s + (parseInt(l.gavetas) || 0), 0);
+        const k = parseFloat(e.kg) || 0;
+        if (g <= 0 || k <= 0) return;          // entrega vieja o sin pesar: no calibra
+        kg += k; gav += g; n++;
+        // Solo las entregas de UNA sola parcela permiten atribuirle su factor:
+        // si la guía mezcla parcelas, los kg vienen revueltos y no se pueden separar.
+        const parcelas = [...new Set(det.map(l => l.parcela).filter(Boolean))];
+        if (parcelas.length !== 1) return;
+        const p = parcelas[0];
+        (acum[p] = acum[p] || { kg: 0, gav: 0, n: 0 });
+        acum[p].kg += k; acum[p].gav += g; acum[p].n++;
+    });
+    const porParcela = {};
+    Object.keys(acum).forEach(p => {
+        porParcela[p] = { factor: acum[p].kg / acum[p].gav, n: acum[p].n, gavetas: acum[p].gav };
+    });
+    return {
+        factor:  gav > 0 ? kg / gav : base,
+        medido:  gav > 0,
+        nEntregas: n, kgPesados: kg, gavetasPesadas: gav,
+        porParcela
+    };
+}
+
+// gavetas → kg estimados. `f` es el objeto de factorKgGaveta, un número, o nada.
+function kgEstimado(gavetas, f) {
+    const factor = (f && typeof f === 'object') ? f.factor
+                 : (typeof f === 'number' && f > 0) ? f
+                 : KG_GAVETA_DEFECTO;
+    return (parseInt(gavetas) || 0) * factor;
+}
+
 // ─── COSTOS / NÓMINA / RENTABILIDAD — reglas únicas ────────
 // Componentes de costo (cada pantalla pasa el subconjunto que le corresponde).
 function calcularCostos({ gastos = [], labores = [], jornadas = [] } = {}) {
@@ -4168,6 +4219,28 @@ function _selfTestCalculos() {
     check('ciclo.despues', enCiclo('2026-08-01', cic) ? 1 : 0, 0);
     check('ciclo.abierto', enCiclo('2030-01-01', { inicio: '2025-08-01', fin: '' }) ? 1 : 0, 1);
     check('ciclo.filtra',  filtrarCiclo([{ fecha:'2025-09-01' }, { fecha:'2026-08-15' }, { fechaISO:'2026-01-10' }], cic).length, 2);
+
+    // Factor kg/gaveta: se MIDE con los kg pesados en entregas, no se asume
+    const fk = factorKgGaveta([
+        { kg: 1800, lotesDetalle: [{ lote:'L1', parcela:'Norte', gavetas: 100 }] },              // 18,0 pura
+        { kg:  800, lotesDetalle: [{ lote:'L2', parcela:'Sur',   gavetas:  50 }] },              // 16,0 pura
+        { kg:  340, lotesDetalle: [{ lote:'L3', parcela:'Norte', gavetas: 10 },
+                                   { lote:'L4', parcela:'Sur',   gavetas: 10 }] },               // mezclada: suma al global, no a parcelas
+        { kg:    0, lotesDetalle: [{ lote:'L5', parcela:'Norte', gavetas: 20 }] },               // sin pesar: se ignora
+        { kg:  500, lotesDetalle: [] }                                                            // entrega vieja: se ignora
+    ]);
+    check('factor.global',      fk.factor, 2940 / 170);   // (1800+800+340)/(100+50+20)
+    check('factor.medido',      fk.medido ? 1 : 0, 1);
+    check('factor.nEntregas',   fk.nEntregas, 3);
+    check('factor.parcelaNorte', fk.porParcela['Norte'].factor, 18);   // solo la guía pura
+    check('factor.parcelaSur',   fk.porParcela['Sur'].factor,   16);
+    // Sin datos → cae al respaldo, y sin respaldo al defecto
+    check('factor.respaldo',    factorKgGaveta([], 17.2).factor, 17.2);
+    check('factor.defecto',     factorKgGaveta([]).factor, KG_GAVETA_DEFECTO);
+    check('factor.noMedido',    factorKgGaveta([]).medido ? 1 : 0, 0);
+    check('kgEst.conFactor',    kgEstimado(10, fk), 10 * (2940 / 170));
+    check('kgEst.conNumero',    kgEstimado(10, 16), 160);
+    check('kgEst.sinFactor',    kgEstimado(10), 165);
 
     const fallan = casos.filter(c => !c.ok);
     if (fallan.length) console.warn(`⚠️ Self-test cálculos: ${fallan.length}/${casos.length} FALLAN`, fallan);
@@ -4406,9 +4479,12 @@ function renderCosechas() {
             </div>`).join('')}
         </div>`;
     }
-    const data  = filtrarCiclo(DB.get('cosechas'), cicloSeleccionado());
+    const cicloCos = cicloSeleccionado();
+    const data  = filtrarCiclo(DB.get('cosechas'), cicloCos);
     const tbody = document.getElementById('tbody-cosechas');
+    const boxKg = document.getElementById('cos-resumen-kg');
     if (!data.length) {
+        if (boxKg) boxKg.innerHTML = '';
         tbody.innerHTML = emptyRow(9, '🧺', 'No hay cosechas en este ciclo.');
         return;
     }
@@ -4416,6 +4492,29 @@ function renderCosechas() {
     const totalDesGav = data.reduce((s,c) => s + (parseInt(c.desechoGavetas)||0), 0);
     const totalEnvio  = totalGav - totalDesGav;
     const pctDesTot   = totalGav > 0 ? (totalDesGav / totalGav * 100) : 0;
+
+    // Equivalencia estimada en kg — SOLO referencia (t/ha, comparar con referentes técnicos).
+    // El factor se mide con los kg pesados en las entregas de este ciclo; si el ciclo aún no
+    // tiene entregas pesadas, cae al histórico, y de último al defecto.
+    if (boxKg) {
+        const fHist = factorKgGaveta(DB.get('entregas'));
+        const fCic  = factorKgGaveta(filtrarCiclo(DB.get('entregas'), cicloCos), fHist.factor);
+        const origen = fCic.medido ? `medido con ${fCic.nEntregas} entrega${fCic.nEntregas!==1?'s':''} pesada${fCic.nEntregas!==1?'s':''} de este ciclo`
+                     : fHist.medido ? `medido con el histórico (${fHist.nEntregas} entrega${fHist.nEntregas!==1?'s':''} pesada${fHist.nEntregas!==1?'s':''})`
+                     : `valor por defecto — aún no hay entregas pesadas`;
+        const porPar = Object.entries(fCic.medido ? fCic.porParcela : fHist.porParcela)
+            .sort((a,b) => b[1].factor - a[1].factor);
+        boxKg.innerHTML = `<div class="card" style="padding:12px 16px;margin-bottom:14px;border-left:4px solid #52b788">
+            <div style="display:flex;gap:16px;align-items:baseline;flex-wrap:wrap">
+                <div style="font-weight:700;font-size:.95rem">≈ ${fmt.num(Math.round(kgEstimado(totalEnvio, fCic)))} kg de envío <span style="font-weight:500;color:var(--muted)">(estimado)</span></div>
+                <div style="font-size:.82rem;color:var(--muted)">${fmt.num(totalEnvio)} gav × <strong>${fCic.factor.toFixed(1)} kg/gav</strong> · ${origen}</div>
+            </div>
+            ${porPar.length ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid #f0f0f0;font-size:.82rem;color:var(--muted)">
+                Peso por gaveta según parcela (calibre): ${porPar.map(([p,d]) => `<strong style="color:var(--text,#333)">${p}</strong> ${d.factor.toFixed(1)}`).join(' · ')} kg/gav
+            </div>` : ''}
+            <div style="margin-top:6px;font-size:.76rem;color:var(--muted)">Referencia para comparar rendimiento (t/ha). El dinero y las mermas se calculan siempre con los kg reales pesados.</div>
+        </div>`;
+    }
     const despGav = _gavetasDespachadasPorLote();
     const ordenado = [...data].sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''));
     tbody.innerHTML = ordenado.map(c => {
@@ -7595,6 +7694,11 @@ function renderRentabilidad() {
     const labFiltr = filtrarCiclo(labores, cicloSel);
     const jorFiltr = filtrarCiclo(jornadas, cicloSel);
 
+    // Factor kg/gaveta medido (ciclo → histórico → defecto), para el rendimiento estimado en t/ha
+    const _factorHist = factorKgGaveta(DB.get('entregas'));
+    const _factorRent = factorKgGaveta(entFiltr, _factorHist.factor);
+    if (!_factorRent.medido) _factorRent.porParcela = _factorHist.porParcela;
+
     // Cálculo centralizado (regla única) — recibe los arreglos YA filtrados por ciclo
     const R = calcularRentabilidad({
         parcelas, cosechas: cosFiltr, poscosecha: posFiltr, entregas: entFiltr,
@@ -7681,7 +7785,14 @@ function renderRentabilidad() {
                 </div>
             </div>
             <div style="margin-top:8px;font-size:11px;color:#888;text-align:right">
-                ${d.kgTotal > 0 ? `Costo por gaveta: <strong>${fmt.money(d.kgTotal > 0 ? d.costoTotal / d.kgTotal : 0)}</strong>` : 'Sin producción de campo registrada'}
+                ${d.kgTotal > 0 ? `${(() => {
+                    // Rendimiento estimado en t/ha — lo comparable con referentes técnicos.
+                    // Usa el factor MEDIDO de esta parcela si tiene guías puras; si no, el de la finca.
+                    const fp = _factorRent.porParcela[d.nombre];
+                    const factor = fp ? fp.factor : _factorRent.factor;
+                    const tHa = d.ha > 0 ? kgEstimado(d.kgTotal, factor) / 1000 / d.ha : 0;
+                    return tHa > 0 ? `≈ <strong>${tHa.toFixed(1)} t/ha</strong> <span style="opacity:.8">(est. ${factor.toFixed(1)} kg/gav${fp ? '' : ' finca'})</span> · ` : '';
+                })()}Costo por gaveta: <strong>${fmt.money(d.costoTotal / d.kgTotal)}</strong>` : 'Sin producción de campo registrada'}
             </div>
         </div>`;
     }).join('');
