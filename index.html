@@ -435,6 +435,13 @@
         .inv-status-ok     { color: var(--success); font-weight: 600; }
         .inv-status-medium { color: var(--warning); font-weight: 600; }
 
+        /* Número del punto siempre visible sobre el marcador del mapa de muestreo */
+        .leaflet-tooltip.mrk-num {
+            background: transparent; border: none; box-shadow: none; padding: 0;
+            color: #fff; font-weight: 800; font-size: 11px; text-shadow: 0 1px 2px rgba(0,0,0,.6);
+        }
+        .leaflet-tooltip.mrk-num::before { display: none; }
+
         /* ── RESPONSIVE ── */
         /* ── Móvil: barra superior + fondo del cajón (ocultos en desktop) ── */
         .mobile-topbar { display: none; }
@@ -863,7 +870,7 @@
     <div class="sidebar-footer" style="display:flex;flex-direction:column;gap:6px">
         <!-- Sello de compilación: subir SIEMPRE al publicar. Sirve para saber, desde la app,
              si el navegador está corriendo el archivo nuevo o uno cacheado. -->
-        <span>v2.0 · build 2026-08-08-F</span>
+        <span>v2.2 · build 2026-08-09-B</span>
         <!-- Herramientas de datos: solo admin (destructivas) -->
         <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
             <div style="display:flex;gap:4px">
@@ -1604,8 +1611,9 @@
             <!-- Mapa -->
             <div class="card" style="margin-bottom:16px;padding:0;overflow:hidden">
                 <div id="mapa-muestreo" style="height:320px"></div>
+                <div id="muestreo-gps-info" style="padding:9px 12px;background:#e3f2fd;font-size:12px;color:#1565c0;font-weight:600;display:none"></div>
                 <div style="padding:8px 12px;background:#f9f9f9;font-size:11px;color:#888">
-                    Toca un marcador en el mapa para abrir la cámara de ese punto
+                    Empieza por el <strong>punto 1</strong> y sigue la línea punteada. Toca un marcador para abrir la cámara de ese punto.
                 </div>
             </div>
 
@@ -3482,6 +3490,8 @@ function eliminarParcela(id, nombre) {
 let _muestreoActivo  = null;
 let _mapMuestreo     = null;
 let _muestreoMarkers = {};
+let _muestreoGPS        = null;   // id del watchPosition (guía en vivo)
+let _muestreoUserMarker = null;   // marcador azul de "estás aquí"
 
 function renderMuestreo() {
     const parcelas = DB.get('parcelas').filter(p => p.poligono);
@@ -3556,6 +3566,86 @@ function generarPuntosMuestreo(poligono, ha) {
     }));
 }
 
+// ─── VERIFICACIÓN GPS DEL MUESTREO ─────────────────────────
+// El GPS del celular bajo copa de aguacate anda entre 5 y 20 m: por eso la tolerancia
+// nunca es más exigente que la precisión que reporta el propio equipo.
+const TOLERANCIA_GPS_M      = 30;    // margen base, en metros
+const MIN_MINUTOS_POR_PUNTO = 0.5;   // caminar al punto + fotografiar; menos que esto es imposible
+
+function _distanciaMetros(lat1, lng1, lat2, lng2) {
+    const R = 6371000, rad = x => x * Math.PI / 180;
+    const dLat = rad(lat2 - lat1), dLng = rad(lng2 - lng1);
+    const a = Math.sin(dLat/2)**2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLng/2)**2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+// Pide la posición actual sin romper el flujo si el GPS falla o el usuario lo niega.
+function _posicionActual(timeout = 8000) {
+    return new Promise(resolve => {
+        if (!navigator.geolocation) return resolve(null);
+        navigator.geolocation.getCurrentPosition(
+            pos => resolve({ lat: +pos.coords.latitude.toFixed(6), lng: +pos.coords.longitude.toFixed(6),
+                             precision: Math.round(pos.coords.accuracy || 0) }),
+            () => resolve(null),
+            { enableHighAccuracy: true, timeout, maximumAge: 10000 }
+        );
+    });
+}
+
+// Versión ligera de los puntos para guardar: coordenadas y evidencia, SIN las fotos
+// (30 fotos pesan 1,2–2,4 MB y Firestore admite 1 MB por documento).
+// ~130 bytes por punto: una sesión de 30 puntos ocupa unos 4 KB.
+function _puntosAuditables(puntos) {
+    return (puntos || []).map(p => ({
+        idx: p.idx, lat: p.lat, lng: p.lng,
+        conFoto: !!p.foto,
+        latReal: p.latReal ?? null, lngReal: p.lngReal ?? null,
+        precision: p.precision ?? null, distancia: p.distancia ?? null, hora: p.hora ?? null
+    }));
+}
+
+// Compara dónde SE DEBÍA tomar cada foto contra dónde SE TOMÓ realmente. Función pura.
+function auditarMuestreo(m) {
+    const pts = Array.isArray(m?.puntos) ? m.puntos.filter(p => p.foto || p.conFoto) : [];
+    const total = pts.length;
+    if (!total) return { total: 0, verificados: 0, fuera: 0, sinGps: 0, alertas: [], detalle: [], sinDatos: true };
+
+    let verificados = 0, fuera = 0, sinGps = 0, distMax = 0, suma = 0, nDist = 0;
+    const detalle = pts.map(p => {
+        if (p.latReal == null || p.lngReal == null) { sinGps++; return { idx: p.idx, estado: 'sin_gps' }; }
+        const d   = p.distancia != null ? p.distancia : _distanciaMetros(p.lat, p.lng, p.latReal, p.lngReal);
+        const tol = Math.max(TOLERANCIA_GPS_M, p.precision || 0);
+        suma += d; nDist++; if (d > distMax) distMax = d;
+        if (d <= tol) { verificados++; return { idx: p.idx, estado: 'ok',    distancia: Math.round(d), tolerancia: Math.round(tol) }; }
+        fuera++;      return { idx: p.idx, estado: 'lejos', distancia: Math.round(d), tolerancia: Math.round(tol) };
+    });
+
+    // Duración real del recorrido
+    const horas = pts.map(p => p.hora).filter(Boolean).map(h => new Date(h).getTime()).filter(t => !isNaN(t));
+    const duracionMin = horas.length >= 2 ? (Math.max(...horas) - Math.min(...horas)) / 60000 : null;
+
+    // ¿Se movió de verdad? Compara la dispersión de las capturas con la de los puntos asignados.
+    const conGps = pts.filter(p => p.latReal != null);
+    let dispReal = 0, dispAsignada = 0;
+    for (let i = 0; i < conGps.length; i++) for (let j = i + 1; j < conGps.length; j++) {
+        dispReal     = Math.max(dispReal,     _distanciaMetros(conGps[i].latReal, conGps[i].lngReal, conGps[j].latReal, conGps[j].lngReal));
+        dispAsignada = Math.max(dispAsignada, _distanciaMetros(conGps[i].lat,     conGps[i].lng,     conGps[j].lat,     conGps[j].lng));
+    }
+
+    const alertas = [];
+    if (fuera)  alertas.push({ nivel:'alto',  msg:`${fuera} foto${fuera!==1?'s':''} tomada${fuera!==1?'s':''} fuera del punto asignado` });
+    if (sinGps) alertas.push({ nivel:'medio', msg:`${sinGps} foto${sinGps!==1?'s':''} sin GPS (no se puede verificar)` });
+    if (duracionMin != null && duracionMin < total * MIN_MINUTOS_POR_PUNTO)
+        alertas.push({ nivel:'alto', msg:`Recorrido demasiado rápido: ${Math.round(duracionMin)} min para ${total} puntos` });
+    if (conGps.length >= 3 && dispAsignada > 100 && dispReal < TOLERANCIA_GPS_M)
+        alertas.push({ nivel:'alto', msg:'Todas las fotos se tomaron casi desde el mismo lugar' });
+
+    return { total, verificados, fuera, sinGps,
+             distMax: Math.round(distMax), distProm: nDist ? Math.round(suma / nDist) : null,
+             duracionMin: duracionMin != null ? Math.round(duracionMin) : null,
+             dispReal: Math.round(dispReal), alertas, detalle, sinDatos: false };
+}
+
 function mostrarSesionMuestreo(m) {
     document.getElementById('muestreo-selector-card').style.display  = 'none';
     document.getElementById('muestreo-activo').style.display          = 'block';
@@ -3598,6 +3688,11 @@ function renderPuntosChecklist(m) {
             <div style="flex:1;min-width:0">
                 <div style="font-size:13px;font-weight:600">Punto ${p.idx}</div>
                 <div style="font-size:11px;color:#aaa">${p.lat}, ${p.lng}</div>
+                ${p.foto ? (p.distancia != null
+                    ? `<div style="font-size:11px;color:${p.distancia <= Math.max(TOLERANCIA_GPS_M, p.precision||0) ? '#2d6a4f' : '#c62828'};font-weight:600">
+                          ${p.distancia <= Math.max(TOLERANCIA_GPS_M, p.precision||0) ? '✓ verificado' : '⚠ fuera del punto'} · a ${p.distancia} m${p.precision ? ` (GPS ±${p.precision} m)` : ''}
+                       </div>`
+                    : '<div style="font-size:11px;color:#e07b2a">sin GPS al tomar la foto</div>') : ''}
             </div>
             ${p.foto ? `<img src="${p.foto}" style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid #ddd;flex-shrink:0">` : ''}
             <label style="cursor:pointer;background:${p.foto ? '#e8f5e9' : '#2d6a4f'};color:${p.foto ? '#2d6a4f' : '#fff'};
@@ -3616,7 +3711,16 @@ function capturarFotoPunto(idx, event) {
     reader.onload = async ev => {
         const compressed = await comprimirImagen(ev.target.result, 800, 0.75);
         const punto = _muestreoActivo.puntos.find(p => p.idx === idx);
-        if (punto) { punto.foto = compressed; punto.fotoType = 'image/jpeg'; }
+        // Evidencia: dónde y cuándo se tomó realmente la foto (no solo dónde debía tomarse)
+        const pos = await _posicionActual();
+        if (punto) {
+            punto.foto = compressed; punto.fotoType = 'image/jpeg';
+            punto.hora = new Date().toISOString();
+            if (pos) {
+                punto.latReal = pos.lat; punto.lngReal = pos.lng; punto.precision = pos.precision;
+                punto.distancia = Math.round(_distanciaMetros(punto.lat, punto.lng, pos.lat, pos.lng));
+            }
+        }
         renderProgresoMuestreo(_muestreoActivo);
         renderPuntosChecklist(_muestreoActivo);
         if (_muestreoMarkers[idx]) {
@@ -3646,19 +3750,60 @@ function initMapaMuestreo(m) {
         L.polyline(m.puntos.map(p => [p.lat, p.lng]),
             { color: '#fff', weight: 1, dashArray: '5 5', opacity: 0.6 }).addTo(_mapMuestreo);
 
-        // Marcadores
+        // Marcadores — el número va SIEMPRE visible para que el orden se lea de un vistazo
         m.puntos.forEach(p => {
             const marker = L.circleMarker([p.lat, p.lng], {
                 radius: 11, fillColor: p.foto ? '#40916c' : '#e07b2a',
                 color: '#fff', weight: 2, fillOpacity: 0.95
-            }).bindTooltip(`Punto ${p.idx}`, { permanent: false, direction: 'top' })
+            }).bindTooltip(p.foto ? `✓ ${p.idx}` : String(p.idx),
+                           { permanent: true, direction: 'center', className: 'mrk-num' })
             .addTo(_mapMuestreo);
             marker.on('click', () =>
                 document.querySelector(`#punto-row-${p.idx} input[type="file"]`)?.click()
             );
             _muestreoMarkers[p.idx] = marker;
         });
+        iniciarGPSMuestreo();
     }, 150);
+}
+
+// Guía en vivo (la que ya tenía el modo campo): posición propia + punto pendiente más cercano.
+function iniciarGPSMuestreo() {
+    if (_muestreoGPS != null) { navigator.geolocation.clearWatch(_muestreoGPS); _muestreoGPS = null; }
+    const info = document.getElementById('muestreo-gps-info');
+    if (!navigator.geolocation) { if (info) { info.style.display='block'; info.textContent='Este dispositivo no entrega GPS.'; } return; }
+    _muestreoGPS = navigator.geolocation.watchPosition(pos => {
+        const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+        if (_mapMuestreo) {
+            if (_muestreoUserMarker) _muestreoUserMarker.setLatLng([lat, lng]);
+            else _muestreoUserMarker = L.circleMarker([lat, lng], {
+                radius: 10, fillColor: '#2196f3', color: '#fff', weight: 3, fillOpacity: 0.9
+            }).addTo(_mapMuestreo).bindTooltip('Estás aquí', { direction: 'bottom' });
+        }
+        if (!_muestreoActivo || !info) return;
+        const pendientes = _muestreoActivo.puntos.filter(p => !p.foto);
+        if (!pendientes.length) {
+            info.style.display = 'block';
+            info.innerHTML = '✅ Todos los puntos fotografiados. Ya puedes analizar con IA.';
+            return;
+        }
+        let cerca = pendientes[0], dMin = Infinity;
+        pendientes.forEach(p => {
+            const d = _distanciaMetros(lat, lng, p.lat, p.lng);
+            if (d < dMin) { dMin = d; cerca = p; }
+        });
+        info.style.display = 'block';
+        info.innerHTML = `📍 Siguiente pendiente: <strong>punto ${cerca.idx}</strong> a ${
+            dMin < 1000 ? Math.round(dMin) + ' m' : (dMin/1000).toFixed(1) + ' km'
+        } · quedan ${pendientes.length} · GPS ±${Math.round(accuracy||0)} m`;
+    }, () => {
+        if (info) { info.style.display='block'; info.textContent='Sin señal GPS. Las fotos quedarán sin verificación de ubicación.'; }
+    }, { enableHighAccuracy: true, maximumAge: 5000 });
+}
+
+function detenerGPSMuestreo() {
+    if (_muestreoGPS != null) { navigator.geolocation.clearWatch(_muestreoGPS); _muestreoGPS = null; }
+    _muestreoUserMarker = null;
 }
 
 async function analizarMuestreo() {
@@ -3724,6 +3869,7 @@ Responde SOLO con JSON exacto, sin texto ni markdown:
             id: m.id, parcelaId: m.parcelaId, parcelaNombre: m.parcelaNombre,
             fechaISO: m.fechaISO, fecha: m.fecha,
             totalPuntos: m.totalPuntos, puntosAnalizados: conFoto.length,
+            puntos: _puntosAuditables(m.puntos),   // evidencia GPS/hora (sin fotos: no caben en Firestore)
             reporte, estado: 'completado'
         });
         mostrarReporteMuestreo(reporte, m);
@@ -3794,9 +3940,50 @@ function mostrarReporteMuestreo(r, m) {
                     </div>`).join('')}
             </div>
         </div>` : ''}
+        ${_bloqueVerificacionGPS(m)}
         <div style="margin-top:16px;font-size:11px;color:#bbb;text-align:right">
-            ${m.parcelaNombre} · ${m.fecha} · ${m.puntos.filter(p=>p.foto).length}/${m.totalPuntos} puntos
+            ${m.parcelaNombre} · ${m.fecha} · ${
+                // El registro guardado trae `puntosAnalizados`; la sesión en curso, no.
+                // En los puntos guardados la marca es `conFoto` (la foto no se persiste).
+                m.puntosAnalizados ?? (Array.isArray(m.puntos) ? m.puntos.filter(p => p.foto || p.conFoto).length : '—')
+            }/${m.totalPuntos} puntos
         </div>`;
+}
+
+// Bloque "¿se tomaron las fotos donde correspondía?" dentro del reporte.
+function _bloqueVerificacionGPS(m) {
+    const a = auditarMuestreo(m);
+    if (a.sinDatos) return '';
+    const sinEvidencia = a.verificados === 0 && a.fuera === 0;   // sesión anterior al control GPS
+    if (sinEvidencia) return `
+        <div style="margin:14px 0;padding:10px 12px;background:#f7f7f7;border-radius:8px;font-size:12px;color:#888">
+            📍 Sin verificación GPS — este muestreo se hizo antes de que se registrara la ubicación de cada foto.
+        </div>`;
+    const hayAlerta = a.alertas.length > 0;
+    const col = hayAlerta ? '#e07b2a' : '#2d6a4f';
+    const lejos = a.detalle.filter(d => d.estado === 'lejos');
+    return `
+        <div style="margin:14px 0;padding:12px;border-radius:8px;border:1px solid ${hayAlerta?'#ffe082':'#b7dfca'};background:${hayAlerta?'#fff8e1':'#e8f5e9'}">
+            <div style="font-size:12px;font-weight:700;color:${col};margin-bottom:6px">
+                ${hayAlerta ? '⚠️' : '✅'} Verificación de ubicación
+            </div>
+            <div style="font-size:12.5px;color:#444">
+                <strong>${a.verificados}/${a.total}</strong> fotos tomadas en el punto asignado${a.distProm != null ? ` · desviación media ${a.distProm} m` : ''}${a.duracionMin != null ? ` · recorrido de ${a.duracionMin} min` : ''}
+            </div>
+            ${a.alertas.map(al => `<div style="font-size:12px;color:${al.nivel==='alto'?'#c62828':'#e65100'};margin-top:4px">
+                ${al.nivel==='alto'?'🔴':'🟡'} ${al.msg}</div>`).join('')}
+            ${lejos.length ? `<div style="font-size:11.5px;color:#777;margin-top:6px">
+                Puntos a revisar: ${lejos.map(d => `Pt. ${d.idx} (${d.distancia} m)`).join(' · ')}</div>` : ''}
+        </div>`;
+}
+
+// Abrir un muestreo del historial y ver su reporte completo.
+function verMuestreo(id) {
+    const m = DB.get('muestreos').find(x => String(x.id) === String(id));
+    if (!m)         return alert('No encontré ese muestreo.');
+    if (!m.reporte) return alert('Ese muestreo no tiene reporte de IA guardado.');
+    mostrarReporteMuestreo(m.reporte, m);
+    document.getElementById('muestreo-reporte-card').scrollIntoView({ behavior:'smooth', block:'start' });
 }
 
 function cancelarMuestreo() {
@@ -3806,8 +3993,11 @@ function cancelarMuestreo() {
 
 function nuevoMuestreo() {
     _muestreoActivo = null;
+    detenerGPSMuestreo();                 // liberar el GPS: si queda activo, gasta batería en el campo
     if (_mapMuestreo) { _mapMuestreo.remove(); _mapMuestreo = null; }
     _muestreoMarkers = {};
+    const gi = document.getElementById('muestreo-gps-info');
+    if (gi) { gi.style.display = 'none'; gi.innerHTML = ''; }
     document.getElementById('muestreo-selector-card').style.display  = 'block';
     document.getElementById('muestreo-activo').style.display          = 'none';
     document.getElementById('muestreo-reporte-card').style.display    = 'none';
@@ -3825,11 +4015,22 @@ function renderHistorialMuestreos() {
     el.innerHTML = lista.map(m => {
         const r = m.reporte || {};
         const c = colores[r.estado_general] || '#888';
-        return `<div style="padding:12px 16px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center;gap:10px">
+        const abrible = !!m.reporte;
+        return `<div onclick="${abrible ? `verMuestreo(${m.id})` : ''}" title="${abrible ? 'Ver el reporte completo' : 'Sin reporte de IA guardado'}"
+             style="padding:12px 16px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center;gap:10px${abrible ? ';cursor:pointer' : ''}"
+             ${abrible ? `onmouseover="this.style.background='#f6fbf7'" onmouseout="this.style.background=''"` : ''}>
             <div>
                 <div style="font-weight:600;font-size:13px">${m.parcelaNombre}</div>
                 <div style="font-size:12px;color:#aaa">${m.fecha} · ${m.puntosAnalizados}/${m.totalPuntos} puntos</div>
                 ${r.problema_mas_frecuente ? `<div style="font-size:12px;color:#555;margin-top:2px">${r.problema_mas_frecuente}</div>` : ''}
+                ${(() => {
+                    const a = auditarMuestreo(m);
+                    if (a.sinDatos || (a.verificados === 0 && a.fuera === 0)) return '';
+                    return a.alertas.length
+                        ? `<div style="font-size:11px;color:#c62828;font-weight:600;margin-top:3px">⚠️ ${a.alertas[0].msg}</div>`
+                        : `<div style="font-size:11px;color:#2d6a4f;margin-top:3px">✓ ${a.verificados}/${a.total} fotos verificadas en sitio</div>`;
+                })()}
+                ${abrible ? '<div style="font-size:11px;color:var(--primary);font-weight:600;margin-top:3px">Ver detalle →</div>' : ''}
             </div>
             <div style="text-align:right;flex-shrink:0">
                 <div style="background:${c};color:#fff;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600">${r.estado_general || '—'}</div>
@@ -4298,6 +4499,55 @@ function _selfTestCalculos() {
     // Entrega vieja con la guía en loteIteranza: igual se resuelve
     check('traza.entregaVieja', (trazarLoteIteranza('14510',{poscosecha:_pos,entregas:_ent})||{}).entrega ? 1 : 0, 1);
     check('traza.inexistente',  trazarLoteIteranza('00000',{poscosecha:_pos,entregas:_ent}) ? 1 : 0, 0);
+
+    // Verificación GPS del muestreo
+    // 0,0009° de latitud ≈ 100 m; sirve para armar casos con distancias conocidas.
+    check('gps.distancia0',  _distanciaMetros(0.62, -78.12, 0.62, -78.12), 0);
+    const d100 = _distanciaMetros(0.6200, -78.1200, 0.6209, -78.1200);
+    check('gps.distancia100', Math.round(d100 / 10) * 10, 100);   // ~100 m (±5)
+
+    const _base = { lat: 0.6200, lng: -78.1200 };
+    const audOk = auditarMuestreo({ puntos: [
+        { idx:1, ..._base, conFoto:true, latReal:0.62001, lngReal:-78.12001, precision:8,  hora:'2026-08-09T08:00:00Z' },
+        { idx:2, lat:0.6209, lng:-78.1200, conFoto:true, latReal:0.62091, lngReal:-78.12001, precision:8, hora:'2026-08-09T08:20:00Z' }
+    ]});
+    check('audit.total',       audOk.total, 2);
+    check('audit.verificados', audOk.verificados, 2);
+    check('audit.sinAlertas',  audOk.alertas.length, 0);
+
+    // Foto tomada a ~100 m del punto asignado → fuera de rango
+    const audLejos = auditarMuestreo({ puntos: [
+        { idx:1, ..._base, conFoto:true, latReal:0.6209, lngReal:-78.1200, precision:8, hora:'2026-08-09T08:00:00Z' },
+        { idx:2, lat:0.6205, lng:-78.1200, conFoto:true, latReal:0.62051, lngReal:-78.12001, precision:8, hora:'2026-08-09T08:30:00Z' }
+    ]});
+    check('audit.fuera',       audLejos.fuera, 1);
+    check('audit.alertaFuera', audLejos.alertas.filter(a=>a.nivel==='alto').length, 1);
+
+    // Precisión mala del equipo (60 m) ⇒ la tolerancia se relaja y NO se acusa injustamente
+    const audImpreciso = auditarMuestreo({ puntos: [
+        { idx:1, ..._base, conFoto:true, latReal:0.62035, lngReal:-78.1200, precision:60, hora:'2026-08-09T08:00:00Z' },
+        { idx:2, lat:0.6205, lng:-78.1200, conFoto:true, latReal:0.62051, lngReal:-78.12, precision:60, hora:'2026-08-09T08:30:00Z' }
+    ]});
+    check('audit.toleraGpsMalo', audImpreciso.fuera, 0);
+
+    // Sin GPS y recorrido imposible (4 puntos en 1 minuto)
+    const audRapido = auditarMuestreo({ puntos: [
+        { idx:1, ..._base, conFoto:true, hora:'2026-08-09T08:00:00Z' },
+        { idx:2, ..._base, conFoto:true, hora:'2026-08-09T08:00:20Z' },
+        { idx:3, ..._base, conFoto:true, hora:'2026-08-09T08:00:40Z' },
+        { idx:4, ..._base, conFoto:true, hora:'2026-08-09T08:01:00Z' }
+    ]});
+    check('audit.sinGps',       audRapido.sinGps, 4);
+    check('audit.alertaRapido', audRapido.alertas.filter(a=>a.msg.includes('rápido')).length, 1);
+
+    // Se quedó parado en un solo lugar fotografiando puntos que están a 200 m
+    const audQuieto = auditarMuestreo({ puntos: [
+        { idx:1, lat:0.6200, lng:-78.12, conFoto:true, latReal:0.62000, lngReal:-78.12, precision:5, hora:'2026-08-09T08:00:00Z' },
+        { idx:2, lat:0.6209, lng:-78.12, conFoto:true, latReal:0.62001, lngReal:-78.12, precision:5, hora:'2026-08-09T08:30:00Z' },
+        { idx:3, lat:0.6218, lng:-78.12, conFoto:true, latReal:0.62002, lngReal:-78.12, precision:5, hora:'2026-08-09T09:00:00Z' }
+    ]});
+    check('audit.mismoLugar', audQuieto.alertas.filter(a=>a.msg.includes('mismo lugar')).length, 1);
+    check('audit.sinDatos',   auditarMuestreo({ puntos: [] }).sinDatos ? 1 : 0, 1);
 
     const rp = rechazoPorParcela({ poscosecha:_pos, entregas:_ent });
     check('rechazo.parcelas',   rp.filas.length, 2);                 // solo las de guía pura
@@ -9329,10 +9579,20 @@ function onFotoCampoCapturada(event) {
     reader.onload = async ev => {
         const compressed = await comprimirImagen(ev.target.result, 800, 0.75);
         const punto = _campoSesion.puntos.find(p => p.idx === idx);
-        if (punto) { punto.foto = compressed; punto.fotoType = 'image/jpeg'; }
+        // Misma evidencia que en Muestreo IA: el GPS del recorrido guía, este dato COMPRUEBA
+        const pos = await _posicionActual();
+        if (punto) {
+            punto.foto = compressed; punto.fotoType = 'image/jpeg';
+            punto.hora = new Date().toISOString();
+            if (pos) {
+                punto.latReal = pos.lat; punto.lngReal = pos.lng; punto.precision = pos.precision;
+                punto.distancia = Math.round(_distanciaMetros(punto.lat, punto.lng, pos.lat, pos.lng));
+            }
+        }
         actualizarUIRecorrido();
         const st = document.getElementById('campo-foto-status');
-        st.textContent = 'Punto ' + idx + ' fotografiado';
+        const dTxt = punto?.distancia != null ? ` · a ${punto.distancia} m del punto` : ' · sin GPS';
+        st.textContent = 'Punto ' + idx + ' fotografiado' + dTxt;
         setTimeout(() => { st.textContent = ''; }, 2500);
         // Avanzar automáticamente al siguiente punto sin foto
         const siguiente = _campoSesion.puntos.find(p => !p.foto);
@@ -9410,7 +9670,8 @@ async function enviarAnalisisCampo() {
         DB.add('muestreos', {
             id: m.id, parcelaId: m.parcelaId, parcelaNombre: m.parcelaNombre,
             fechaISO: m.fechaISO, fecha: m.fecha, totalPuntos: m.totalPuntos,
-            puntosAnalizados: conFoto.length, reporte, estado: 'completado', origen: 'campo'
+            puntosAnalizados: conFoto.length, puntos: _puntosAuditables(m.puntos),
+            reporte, estado: 'completado', origen: 'campo'
         });
         agregarASyncQueue({ tipo: 'muestreo', parcela: m.parcelaNombre, fecha: m.fechaISO,
             totalPuntos: m.totalPuntos, puntosAnalizados: conFoto.length, reporte });
