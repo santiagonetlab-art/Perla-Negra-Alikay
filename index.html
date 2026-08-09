@@ -870,7 +870,7 @@
     <div class="sidebar-footer" style="display:flex;flex-direction:column;gap:6px">
         <!-- Sello de compilación: subir SIEMPRE al publicar. Sirve para saber, desde la app,
              si el navegador está corriendo el archivo nuevo o uno cacheado. -->
-        <span>v2.2 · build 2026-08-09-B</span>
+        <span>v2.4 · build 2026-08-09-D</span>
         <!-- Herramientas de datos: solo admin (destructivas) -->
         <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
             <div style="display:flex;gap:4px">
@@ -3709,7 +3709,7 @@ function capturarFotoPunto(idx, event) {
     if (!file || !_muestreoActivo) return;
     const reader = new FileReader();
     reader.onload = async ev => {
-        const compressed = await comprimirImagen(ev.target.result, 800, 0.75);
+        const compressed = await comprimirImagen(ev.target.result, FOTO_MUESTREO_DIM, FOTO_MUESTREO_Q);
         const punto = _muestreoActivo.puntos.find(p => p.idx === idx);
         // Evidencia: dónde y cuándo se tomó realmente la foto (no solo dónde debía tomarse)
         const pos = await _posicionActual();
@@ -3806,6 +3806,47 @@ function detenerGPSMuestreo() {
     _muestreoUserMarker = null;
 }
 
+// ─── RESOLUCIÓN DE LAS FOTOS QUE SE ENVÍAN A LA IA ─────────
+// El coste en tokens depende SOLO de las dimensiones (ancho × alto), no del peso
+// del archivo: por eso la calidad JPEG se sube sin pagar nada más, y es lo que
+// preserva la textura fina (donde se ven trips, clorosis y lesiones tempranas).
+// Opus 5 admite hasta 2576 px de lado largo; para el muestreo el techo real no es
+// el modelo sino el límite de ~32 MB por petición, con 20 fotos en el mismo envío.
+const FOTO_MUESTREO_DIM = 1600, FOTO_MUESTREO_Q = 0.85;   // muchas fotos por envío
+const FOTO_UNICA_DIM    = 2000, FOTO_UNICA_Q    = 0.88;   // una sola foto: se puede ser generoso
+const LIMITE_PETICION_MB = 24;                             // margen bajo los 32 MB reales
+
+// Con 20 fotos ninguna supera el límite por separado y aun así la petición puede
+// pasarse: hay que mirar el TOTAL y bajar la resolución de todas si no cabe.
+async function _ajustarFotosAlLimite(fotos) {
+    const total = () => fotos.reduce((s, p) => s + (p.foto ? p.foto.length : 0), 0);
+    const escalones = [[1200, 0.80], [900, 0.75], [700, 0.65]];
+    for (const [dim, q] of escalones) {
+        if (total() <= LIMITE_PETICION_MB * 1024 * 1024) break;
+        for (const p of fotos) if (p.foto) p.foto = await comprimirImagen(p.foto, dim, q);
+    }
+    return +(total() / (1024 * 1024)).toFixed(1);   // MB finales, para diagnóstico
+}
+
+// ─── LECTURA DE RESPUESTAS DE LA IA ────────────────────────
+// Claude Opus 5 PIENSA por defecto, así que la respuesta trae primero un bloque
+// `thinking` (con texto vacío) y DESPUÉS el `text`. Leer content[0] a ciegas
+// devolvía cadena vacía y reventaba el JSON.parse: hay que buscar el bloque de texto.
+const MODELO_IA_FOTOS = 'claude-opus-5';   // análisis de imágenes (muestreo, campo, observaciones, facturas)
+
+function _textoRespuestaIA(data) {
+    const bloques = Array.isArray(data?.content) ? data.content : [];
+    const texto = bloques.find(b => b?.type === 'text' && typeof b.text === 'string');
+    return texto ? texto.text : '';
+}
+
+// Texto → objeto, tolerando que el modelo lo envuelva en ```json ... ```
+function _jsonRespuestaIA(data) {
+    const crudo = _textoRespuestaIA(data).replace(/```json?|```/g, '').trim();
+    if (!crudo) throw new Error('La IA no devolvió texto analizable.');
+    return JSON.parse(crudo);
+}
+
 async function analizarMuestreo() {
     if (!_muestreoActivo) return;
     const apiKey = localStorage.getItem('hda_apikey') || '';
@@ -3824,12 +3865,8 @@ async function analizarMuestreo() {
     const fotos = conFoto.length <= 20 ? conFoto
         : conFoto.filter((_, i) => i % Math.ceil(conFoto.length / 20) === 0).slice(0, 20);
 
-    // Recomprimir cualquier foto que supere 4MB en base64 antes de enviar
-    for (const p of fotos) {
-        if (p.foto && p.foto.length > 4 * 1024 * 1024) {
-            p.foto = await comprimirImagen(p.foto, 600, 0.6);
-        }
-    }
+    // Vigilar el PESO TOTAL del envío, no el de cada foto por separado
+    await _ajustarFotosAlLimite(fotos);
 
     const content = [];
     fotos.forEach(p => {
@@ -3857,12 +3894,14 @@ Responde SOLO con JSON exacto, sin texto ni markdown:
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey,
                        'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-            body: JSON.stringify({ model: 'claude-opus-4-6', max_tokens: 2048,
+            // max_tokens cubre pensamiento + respuesta: hay que dejar aire o el JSON se corta
+            body: JSON.stringify({ model: MODELO_IA_FOTOS, max_tokens: 8000,
+                                   thinking: { type: 'adaptive' },
                                    messages: [{ role: 'user', content }] })
         });
         if (!res.ok) { const e = await res.json(); throw new Error(e?.error?.message || `Error ${res.status}`); }
         const data   = await res.json();
-        const reporte = JSON.parse((data.content?.[0]?.text || '').replace(/```json?|```/g, '').trim());
+        const reporte = _jsonRespuestaIA(data);
         _muestreoActivo.reporte = reporte;
         _muestreoActivo.estado  = 'completado';
         DB.add('muestreos', {
@@ -6004,8 +6043,9 @@ Responde SOLO con el JSON, sin texto adicional, sin markdown:
                 'anthropic-dangerous-direct-browser-access': 'true'
             },
             body: JSON.stringify({
-                model: 'claude-opus-4-6',
-                max_tokens: 2048,
+                model: MODELO_IA_FOTOS,
+                max_tokens: 4000,                 // pensamiento + respuesta
+                thinking: { type: 'adaptive' },
                 messages: [{
                     role: 'user',
                     content: [
@@ -6022,7 +6062,7 @@ Responde SOLO con el JSON, sin texto adicional, sin markdown:
         }
 
         const data = await res.json();
-        const text = data.content?.[0]?.text || '';
+        const text = _textoRespuestaIA(data);
         const jsonStr = text.replace(/```json?|```/g, '').trim();
         scanData = JSON.parse(jsonStr);
 
@@ -7454,11 +7494,10 @@ async function analizarFotoCultivo() {
         btn.disabled = false;
         return alert('No se puede procesar esta imagen.');
     }
-    // Comprimir si supera 4MB antes de enviar a la API
-    if (src.length > 4 * 1024 * 1024) {
-        statusEl.innerHTML = '<span style="color:#1565c0">🗜️ Comprimiendo imagen...</span>';
-        src = await comprimirImagen(src, 800, 0.75);
-    }
+    // Es UNA sola foto: se envía siempre a resolución alta (antes solo se acotaba
+    // si pasaba de 4MB, así que unas iban enormes y otras chicas, sin criterio).
+    statusEl.innerHTML = '<span style="color:#1565c0">🗜️ Preparando imagen...</span>';
+    src = await comprimirImagen(src, FOTO_UNICA_DIM, FOTO_UNICA_Q);
     const b64 = src.split(',')[1];
     const mediaType = 'image/jpeg';
 
@@ -7484,8 +7523,9 @@ Responde SOLO con el siguiente JSON, sin texto adicional ni markdown:
                 'anthropic-dangerous-direct-browser-access': 'true'
             },
             body: JSON.stringify({
-                model: 'claude-opus-4-6',
-                max_tokens: 1024,
+                model: MODELO_IA_FOTOS,
+                max_tokens: 4000,                 // pensamiento + respuesta
+                thinking: { type: 'adaptive' },
                 messages: [{ role: 'user', content: [
                     { type: 'image', source: { type: 'base64', media_type: mediaType, data: b64 } },
                     { type: 'text', text: prompt }
@@ -7499,7 +7539,7 @@ Responde SOLO con el siguiente JSON, sin texto adicional ni markdown:
         }
 
         const data = await res.json();
-        const text = data.content?.[0]?.text || '';
+        const text = _textoRespuestaIA(data);
         const result = JSON.parse(text.replace(/```json?|```/g, '').trim());
 
         document.getElementById('obs-plantix').value = result.diagnostico || '';
@@ -9577,7 +9617,7 @@ function onFotoCampoCapturada(event) {
     const idx = parseInt(event.target.dataset.puntoIdx) || _campoSesion.puntos.find(p => !p.foto)?.idx || 1;
     const reader = new FileReader();
     reader.onload = async ev => {
-        const compressed = await comprimirImagen(ev.target.result, 800, 0.75);
+        const compressed = await comprimirImagen(ev.target.result, FOTO_MUESTREO_DIM, FOTO_MUESTREO_Q);
         const punto = _campoSesion.puntos.find(p => p.idx === idx);
         // Misma evidencia que en Muestreo IA: el GPS del recorrido guía, este dato COMPRUEBA
         const pos = await _posicionActual();
@@ -9642,12 +9682,8 @@ async function enviarAnalisisCampo() {
     const fotos = conFoto.length <= 20 ? conFoto
         : conFoto.filter((_, i) => i % Math.ceil(conFoto.length / 20) === 0).slice(0, 20);
 
-    // Recomprimir cualquier foto que supere 4MB en base64 antes de enviar
-    for (const p of fotos) {
-        if (p.foto && p.foto.length > 4 * 1024 * 1024) {
-            p.foto = await comprimirImagen(p.foto, 600, 0.6);
-        }
-    }
+    // Vigilar el PESO TOTAL del envío, no el de cada foto por separado
+    await _ajustarFotosAlLimite(fotos);
 
     const content = [];
     fotos.forEach(p => {
@@ -9660,12 +9696,13 @@ async function enviarAnalisisCampo() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey,
                 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-            body: JSON.stringify({ model: 'claude-opus-4-6', max_tokens: 1024,
+            body: JSON.stringify({ model: MODELO_IA_FOTOS, max_tokens: 4000,
+                thinking: { type: 'adaptive' },   // max_tokens cubre pensamiento + respuesta
                 messages: [{ role: 'user', content }] })
         });
         if (!res.ok) { const e = await res.json(); throw new Error(e?.error?.message || 'Error ' + res.status); }
         const data = await res.json();
-        const reporte = JSON.parse((data.content?.[0]?.text || '').replace(/```json?|```/g, '').trim());
+        const reporte = _jsonRespuestaIA(data);
         m.reporte = reporte; m.estado = 'completado';
         DB.add('muestreos', {
             id: m.id, parcelaId: m.parcelaId, parcelaNombre: m.parcelaNombre,
@@ -10210,7 +10247,7 @@ async function enviarMensajeIA() {
                 'anthropic-dangerous-direct-browser-access': 'true'
             },
             body: JSON.stringify({
-                model: 'claude-haiku-4-5-20251001',
+                model: 'claude-haiku-4-5',        // chat: modelo económico, sin pensamiento
                 max_tokens: 1024,
                 system: systemPrompt,
                 messages: _chatHistorial.slice(-12)
@@ -10220,7 +10257,7 @@ async function enviarMensajeIA() {
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error?.message || 'Error ' + res.status);
 
-        let respuesta = data.content?.[0]?.text || '';
+        let respuesta = _textoRespuestaIA(data);
 
         // Extraer bloques [[ACCIÓN:{...}]]
         const accionRegex = /\[\[ACCIÓN:([\s\S]*?)\]\]/g;
