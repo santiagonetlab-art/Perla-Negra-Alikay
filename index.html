@@ -774,6 +774,9 @@
 <div class="mobile-topbar">
     <button class="hamburger" onclick="toggleSidebar()" aria-label="Abrir menú">☰</button>
     <span class="mobile-title">🥑 Mi Hacienda</span>
+    <!-- Estado de conexión: visible SIN abrir el menú (así lo usa el personal en campo) -->
+    <span id="estado-conexion-pill" style="display:none;margin-left:auto;background:rgba(255,255,255,.18);
+          padding:3px 9px;border-radius:12px;font-size:.9rem;align-items:center"></span>
 </div>
 <div class="sidebar-backdrop" onclick="toggleSidebar(false)"></div>
 
@@ -873,7 +876,7 @@
              sufijos distintos: "v2.4-D" y "v2.4-E" se leen igual de un vistazo y
              hacen imposible saber qué versión está corriendo. La fecha es informativa,
              NO identifica la versión. -->
-        <span>v3.1 · 2026-08-10</span>
+        <span>v3.2 · 2026-08-10<span id="estado-conexion-pie"></span></span>
         <!-- Herramientas de datos: solo admin (destructivas) -->
         <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
             <div style="display:flex;gap:4px">
@@ -903,6 +906,11 @@
      MAIN CONTENT
 ════════════════════════════════════════════════════════════ -->
 <main class="main">
+
+    <!-- Franja de aviso: aparece SOLO cuando no se está guardando en la nube -->
+    <div id="banda-sin-conexion" style="display:none;background:#ffebee;border:1px solid #ffcdd2;
+         border-left:4px solid #c62828;color:#8e2a2a;border-radius:8px;padding:11px 14px;
+         margin-bottom:16px;font-size:.86rem;line-height:1.45"></div>
 
     <!-- ── DASHBOARD ── -->
     <div id="page-dashboard" class="page active">
@@ -3143,6 +3151,7 @@ async function initFirestore() {
             _cache[c] = JSON.parse(localStorage.getItem('hda_' + c) || '[]');
         });
         _appReady = true;
+        setEstadoConexion('local');
         return;
     }
 
@@ -3187,16 +3196,81 @@ async function initFirestore() {
         const tieneFirestore = COLECCIONES.some(c => _cache[c].length > 0);
         if (!tieneFirestore) await migrarDesdeLocalStorage();
 
+        setEstadoConexion('conectado');
+
     } catch(e) {
         console.warn('Firestore timeout/error, usando localStorage como fallback:', e.message);
         COLECCIONES.forEach(c => {
             _cache[c] = JSON.parse(localStorage.getItem('hda_' + c) || '[]');
         });
+        // Antes esto solo iba a la consola: en campo nadie se enteraba de que
+        // estaba trabajando sobre datos viejos guardados en el propio teléfono.
+        setEstadoConexion('sin_conexion');
     }
     mostrarCargando(false);
     _appReady = true;
     activarListeners();
 }
+
+// ─── ESTADO DE CONEXIÓN ────────────────────────────────────
+// La app podía trabajar una jornada entera con datos locales viejos sin avisar:
+// el arranque espera 30 s por Firebase y, si no llega, usa lo que haya guardado
+// en el teléfono y sigue como si nada. En campo eso significa registrar sobre una
+// base equivocada sin saberlo. Ahora el estado se ve SIEMPRE, y en el celular sin
+// tener que abrir el menú.
+let _estadoConexion = 'conectando';   // conectando | conectado | sin_conexion | local
+
+function hayConexion() { return _estadoConexion === 'conectado' || _estadoConexion === 'local'; }
+
+function setEstadoConexion(nuevo) {
+    if (_estadoConexion === nuevo) return;
+    _estadoConexion = nuevo;
+    _renderEstadoConexion();
+}
+
+const _ETIQUETA_CONEXION = {
+    conectando:   { txt:'conectando…',            corto:'…',  color:'#f9a825', fondo:'#fff8e1' },
+    conectado:    { txt:'conectado',              corto:'☁️', color:'#2d6a4f', fondo:'#e8f5e9' },
+    sin_conexion: { txt:'SIN CONEXIÓN',           corto:'⚠️', color:'#c62828', fondo:'#ffebee' },
+    local:        { txt:'modo local (sin nube)',  corto:'💾', color:'#1565c0', fondo:'#e3f2fd' }
+};
+
+function _renderEstadoConexion() {
+    const e = _ETIQUETA_CONEXION[_estadoConexion] || _ETIQUETA_CONEXION.conectando;
+
+    const pie = document.getElementById('estado-conexion-pie');
+    if (pie) { pie.textContent = ' · ' + e.corto + ' ' + e.txt; pie.style.color = e.color; }
+
+    // Pastilla en la barra superior del celular: visible sin abrir el menú
+    const pill = document.getElementById('estado-conexion-pill');
+    if (pill) {
+        pill.textContent = e.corto;
+        pill.title = e.txt;
+        pill.style.display = (_estadoConexion === 'conectado') ? 'none' : 'inline-flex';
+    }
+
+    // Franja de aviso: solo cuando NO se está guardando en la nube
+    const banda = document.getElementById('banda-sin-conexion');
+    if (banda) {
+        const mostrar = _estadoConexion === 'sin_conexion';
+        banda.style.display = mostrar ? 'block' : 'none';
+        if (mostrar) banda.innerHTML =
+            '⚠️ <strong>Sin conexión con la base.</strong> Estás viendo datos guardados en este teléfono, que pueden estar desactualizados. ' +
+            'Lo que registres se enviará cuando vuelva la señal — <strong>no cierres la app hasta entonces</strong>.';
+    }
+}
+
+// Aviso al guardar sin conexión. No bloquea: Firebase reintenta solo y los datos
+// llegan cuando hay señal. Lo que sí se pierde es cerrar la app antes de eso.
+function confirmarGuardadoSinConexion(que) {
+    if (hayConexion()) return true;
+    return confirm(`⚠️ Sin conexión con la base de datos.\n\n` +
+        `${que} se enviará cuando vuelva la señal, pero se PIERDE si cierras la app antes.\n\n` +
+        `Además, los datos que ves en pantalla pueden estar desactualizados.\n\n¿Guardar de todas formas?`);
+}
+
+window.addEventListener('offline', () => { if (!_MODO_LOCAL) setEstadoConexion('sin_conexion'); });
+window.addEventListener('online',  () => { if (!_MODO_LOCAL && _appReady) setEstadoConexion('conectado'); });
 
 // ─── LISTENERS EN TIEMPO REAL ──────────────────────────────
 function activarListeners() {
@@ -3208,8 +3282,12 @@ function activarListeners() {
             // Solo re-renderizar si los datos cambiaron desde afuera
             const cambio = JSON.stringify(nuevo) !== JSON.stringify(_cache[col]);
             _cache[col] = nuevo;
+            setEstadoConexion('conectado');   // llegó dato del servidor: hay conexión
             if (cambio) render();
-        }, e => console.warn('Listener error:', col, e));
+        }, e => {
+            console.warn('Listener error:', col, e);
+            setEstadoConexion('sin_conexion');
+        });
     });
 }
 
@@ -3478,9 +3556,10 @@ function saveCosecha() {
     if (!gavetas) return alert('Ingresa las gavetas cosechadas.');
     if (!lote)    return alert('El lote de hacienda es obligatorio (es tu ancla de trazabilidad).');
     // Chequeo de lote duplicado, excluyendo el propio registro si se está editando
-    if (DB.get('cosechas').some(c => String(c.id) !== String(editId) && (c.loteHacienda||'').toLowerCase() === lote.toLowerCase())) {
+    if (DB.get('cosechas').some(c => !mismoId(c.id, editId) && (c.loteHacienda||'').toLowerCase() === lote.toLowerCase())) {
         if (!confirm(`⚠️ Ya existe una cosecha con el lote "${lote}".\n¿Guardar de todas formas?`)) return;
     }
+    if (!confirmarGuardadoSinConexion('La cosecha')) return;
     const campos = {
         fecha:          val('c-fecha'),
         parcela:        val('c-parcela'),
@@ -7961,6 +8040,7 @@ async function guardarObservacion() {
 
     const parcela   = parcelaPorId(parcelaVal);
     if (!parcela)   return alert('No se encontró esa parcela. Vuelve a seleccionarla.');
+    if (!confirmarGuardadoSinConexion('La observación')) return;
     const parcelaId = parcela.id;   // el id REAL de la parcela, sin truncar
 
     // Foto (puede ser null si no subieron)
@@ -9977,6 +10057,7 @@ function entrarConRol() {
     aplicarRol(_rolActual);
     loadApiKey();
     renderFacturasHistory();
+    _renderEstadoConexion();          // pintar "conectando…" mientras espera a Firebase
     initFirestore().then(() => {
         migrarIteranzaAPoscosecha(); migrarLotesCosecha(); migrarIndicesAFirebase();
         repararParcelasObservaciones();
