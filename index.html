@@ -873,7 +873,7 @@
              sufijos distintos: "v2.4-D" y "v2.4-E" se leen igual de un vistazo y
              hacen imposible saber qué versión está corriendo. La fecha es informativa,
              NO identifica la versión. -->
-        <span>v2.6 · 2026-08-09</span>
+        <span>v2.8 · 2026-08-09</span>
         <!-- Herramientas de datos: solo admin (destructivas) -->
         <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
             <div style="display:flex;gap:4px">
@@ -1960,6 +1960,8 @@
                 <option value="tratamiento">💊 Tratamientos</option>
             </select>
         </div>
+        <!-- Diagnósticos que la IA no pudo clasificar: de aquí sale qué agregar al catálogo -->
+        <div id="hist-sin-clasificar"></div>
         <div id="historial-container"></div>
     </div>
 
@@ -3829,6 +3831,9 @@ const PROBLEMAS_AGUACATE = [
     { cod:'mosca_blanca',     nombre:'Mosca blanca',               tipo:'plaga',       claves:['mosca blanca','aleurod'] },
     { cod:'cochinilla',       nombre:'Cochinilla o escama',        tipo:'plaga',       claves:['cochinilla','escama','piojo harinoso'] },
     { cod:'hormiga',          nombre:'Hormiga arriera',            tipo:'plaga',       claves:['hormiga','arriera'] },
+    { cod:'nematodos',        nombre:'Nematodos',                  tipo:'plaga',       claves:['nematodo','meloidogyne'] },
+    { cod:'defoliador',       nombre:'Gusano / larva defoliadora', tipo:'plaga',       claves:['defoliador','gusano','oruga','larva'] },
+    { cod:'chinche',          nombre:'Chinche',                    tipo:'plaga',       claves:['chinche'] },
     // ── Enfermedades ──
     { cod:'antracnosis',      nombre:'Antracnosis',                tipo:'enfermedad',  claves:['antracnosis','colletotrichum'] },
     { cod:'rona',             nombre:'Roña / sarna',               tipo:'enfermedad',  claves:['rona','sarna','sphaceloma'] },
@@ -3836,6 +3841,11 @@ const PROBLEMAS_AGUACATE = [
     { cod:'cercospora',       nombre:'Cercospora / mancha foliar',  tipo:'enfermedad', claves:['cercospora','mancha foliar','mancha de la hoja'] },
     { cod:'oidio',            nombre:'Oídio / cenicilla',          tipo:'enfermedad',  claves:['oidio','cenicilla','mildiu polvoriento'] },
     { cod:'pudricion_pedunculo', nombre:'Pudrición peduncular',    tipo:'enfermedad',  claves:['pudricion peduncular','peduncul'] },
+    { cod:'verticillium',     nombre:'Verticillium (marchitez)',   tipo:'enfermedad',  claves:['verticillium','verticilosis'] },
+    { cod:'muerte_descendente', nombre:'Muerte descendente (dieback)', tipo:'enfermedad', claves:['muerte descendente','dieback','muerte regresiva','secamiento de ramas'] },
+    { cod:'cancro_tronco',    nombre:'Cancro / pudrición de tronco', tipo:'enfermedad', claves:['cancro','chancro','pudricion de tronco','exudacion'] },
+    { cod:'bacteriosis',      nombre:'Bacteriosis / mancha bacteriana', tipo:'enfermedad', claves:['bacterios','mancha bacteriana','xanthomonas','pseudomonas'] },
+    { cod:'roya',             nombre:'Roya',                       tipo:'enfermedad',  claves:['roya'] },
     // ── Deficiencias nutricionales ──
     { cod:'def_zinc',      nombre:'Deficiencia de zinc',      tipo:'deficiencia', claves:['zinc'] },
     { cod:'def_hierro',    nombre:'Deficiencia de hierro',    tipo:'deficiencia', claves:['hierro','clorosis ferrica'] },
@@ -3843,6 +3853,8 @@ const PROBLEMAS_AGUACATE = [
     { cod:'def_nitrogeno', nombre:'Deficiencia de nitrógeno', tipo:'deficiencia', claves:['nitrogeno'] },
     { cod:'def_magnesio',  nombre:'Deficiencia de magnesio',  tipo:'deficiencia', claves:['magnesio'] },
     { cod:'def_calcio',    nombre:'Deficiencia de calcio',    tipo:'deficiencia', claves:['calcio'] },
+    { cod:'def_potasio',   nombre:'Deficiencia de potasio',   tipo:'deficiencia', claves:['potasio'] },
+    { cod:'def_manganeso', nombre:'Deficiencia de manganeso', tipo:'deficiencia', claves:['manganeso'] },
     // ── Abiótico / manejo ──
     { cod:'estres_hidrico', nombre:'Estrés hídrico',            tipo:'abiotico', claves:['estres hidrico','falta de agua','sequia','marchit'] },
     { cod:'anegamiento',    nombre:'Exceso de agua / anegamiento', tipo:'abiotico', claves:['anegamiento','encharca','exceso de agua','suelo saturado'] },
@@ -3850,6 +3862,9 @@ const PROBLEMAS_AGUACATE = [
     { cod:'dano_frio',      nombre:'Daño por frío o helada',    tipo:'abiotico', claves:['helada','dano por frio','congelamiento'] },
     { cod:'dano_viento',    nombre:'Daño por viento',           tipo:'abiotico', claves:['viento'] },
     { cod:'fitotoxicidad',  nombre:'Fitotoxicidad',             tipo:'abiotico', claves:['fitotox','quemado por producto'] },
+    { cod:'dano_mecanico',  nombre:'Daño mecánico (poda/cosecha)', tipo:'abiotico', claves:['dano mecanico','herida de poda','maltrato de cosecha'] },
+    { cod:'salinidad',      nombre:'Salinidad / exceso de sales', tipo:'abiotico', claves:['salinidad','exceso de sales','suelo salino'] },
+    { cod:'caida_fruto',    nombre:'Caída de fruto o flor',     tipo:'abiotico', claves:['caida de fruto','caida de flor','aborto floral','desprendimiento de fruto'] },
     // ── Cierre ──
     { cod:'sano', nombre:'Sano', tipo:'otro', claves:['sano','saludable','sin problema','sin sintomas'] },
     { cod:'otro', nombre:'Otro / no identificado', tipo:'otro', claves:[] }
@@ -3897,6 +3912,52 @@ function problemasDeMuestreo(m) {
 }
 function problemaDeObservacion(o) {
     return o?.problemaCodigo || codigoProblema(o?.plantixDiagnostico || o?.descripcion) || null;
+}
+
+// ── El catálogo se delata solo ──────────────────────────────
+// Un vocabulario cerrado es seguro SOLO si avisa cuándo se queda corto. Aquí se
+// juntan los problemas que la IA marcó como fuera de catálogo, más los que cayeron
+// en 'otro' arrastrando su texto libre. De aquí sale qué agregar al catálogo:
+// crece con lo que de verdad aparece en la hacienda, no con lo que yo supuse.
+function diagnosticosSinClasificar({ muestreos, observaciones } = {}) {
+    muestreos    = muestreos    || DB.get('muestreos');
+    observaciones= observaciones|| DB.get('observaciones');
+    const acum = {};   // nombre normalizado → { nombre, veces, parcelas:Set, ultima }
+    const anotar = (nombre, parcela, fecha) => {
+        const key = _normTexto(nombre);
+        if (!key) return;
+        (acum[key] = acum[key] || { nombre: String(nombre).trim(), veces: 0, parcelas: new Set(), ultima: '' });
+        acum[key].veces++;
+        if (parcela) acum[key].parcelas.add(parcela);
+        if (fecha && fecha > acum[key].ultima) acum[key].ultima = fecha;
+    };
+
+    muestreos.forEach(m => {
+        const r = m?.reporte || {}, f = m.fechaISO || '', p = m.parcelaNombre || '';
+        // Se cuenta UNA vez por registro: el mismo nombre suele repetirse entre
+        // `problema_mas_frecuente` y `problemas_detectados`, y contarlo dos veces
+        // inflaría la frecuencia y haría parecer más urgente de lo que es.
+        const unicos = new Map();   // clave normalizada → nombre original
+        const sumar = n => { const k = _normTexto(n); if (k && !unicos.has(k)) unicos.set(k, n); };
+
+        // 1) Lo que la IA declaró explícitamente fuera de catálogo
+        (Array.isArray(r.problemas_no_catalogados) ? r.problemas_no_catalogados : []).forEach(sumar);
+        // 2) Lo que cayó en 'otro': se rescata su texto libre para saber QUÉ era
+        if (problemasDeMuestreo(m).includes('otro')) {
+            [r.problema_mas_frecuente, ...(Array.isArray(r.problemas_detectados) ? r.problemas_detectados : [])]
+                .filter(Boolean).filter(t => codigoProblema(t) === 'otro').forEach(sumar);
+        }
+        unicos.forEach(nombre => anotar(nombre, p, f));
+    });
+    observaciones.forEach(o => {
+        const f = o.fechaISO || '', p = o.parcelaNombre || '';
+        if (o.problemaNoCatalogado) anotar(o.problemaNoCatalogado, p, f);
+        else if (problemaDeObservacion(o) === 'otro') anotar(o.plantixDiagnostico || o.descripcion, p, f);
+    });
+
+    return Object.values(acum)
+        .map(d => ({ nombre: d.nombre, veces: d.veces, parcelas: [...d.parcelas], ultima: d.ultima }))
+        .sort((a, b) => b.veces - a.veces);
 }
 
 // ─── RESOLUCIÓN DE LAS FOTOS QUE SE ENVÍAN A LA IA ─────────
@@ -3985,7 +4046,11 @@ Responde SOLO con JSON exacto, sin texto ni markdown:
 
 "problemas_codigos" es OBLIGATORIO y solo puede contener códigos de esta lista exacta (sin inventar, sin variantes):
 ${_catalogoParaPrompt()}
-Usa "otro" solo si de verdad no encaja en ninguno, y "sano" si no hay problemas. Los códigos deben corresponder a lo mismo que describes en "problemas_detectados"; ese campo sigue siendo texto libre para el matiz.` });
+Usa "sano" si no hay problemas. Los códigos deben corresponder a lo que describes en "problemas_detectados"; ese campo sigue siendo texto libre para el matiz.
+
+IMPORTANTE — no fuerces la clasificación: si lo que ves NO corresponde claramente a ninguno de los códigos, usa "otro" y escribe el nombre técnico real en "problemas_no_catalogados". Es MUCHO mejor un "otro" bien nombrado que encajarlo a la fuerza en una categoría parecida (por ejemplo, no llames "phytophthora" a un daño de raíz que podría ser nematodos). Agrega al JSON:
+  "problemas_no_catalogados": ["nombre real 1", "nombre real 2"]
+Deja el arreglo vacío si todo encajó en la lista.` });
 
     try {
         const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -4708,6 +4773,31 @@ function _selfTestCalculos() {
     check('vocab.musViejo', problemasDeMuestreo(mViejo).sort().join(',') === 'antracnosis,def_zinc,trips' ? 1:0, 1);
     check('vocab.obsGuardado', problemaDeObservacion({ problemaCodigo:'acaros' }) === 'acaros' ? 1:0, 1);
     check('vocab.obsDerivado', problemaDeObservacion({ plantixDiagnostico:'Ácaros en el envés' }) === 'acaros' ? 1:0, 1);
+    // Entradas nuevas del catálogo (huecos que se cerraron)
+    check('vocab.nematodos', codigoProblema('Meloidogyne en raíz') === 'nematodos' ? 1:0, 1);
+    check('vocab.dieback',   codigoProblema('muerte descendente de ramas') === 'muerte_descendente' ? 1:0, 1);
+    check('vocab.vertic',    codigoProblema('marchitez por Verticillium') === 'verticillium' ? 1:0, 1);
+    check('vocab.potasio',   codigoProblema('deficiencia de potasio') === 'def_potasio' ? 1:0, 1);
+    // El orden importa: "golpe de sol" NO debe caer en daño mecánico
+    check('vocab.ordenSol',  codigoProblema('golpe de sol en fruto') === 'quemadura_sol' ? 1:0, 1);
+
+    // El catálogo se delata solo: lo no catalogado debe salir a la luz
+    const sinClas = diagnosticosSinClasificar({
+        muestreos: [
+            { parcelaNombre:'Lote I', fechaISO:'2026-07-10',
+              reporte:{ problemas_codigos:['otro'], problemas_no_catalogados:['Agalla de rama'] } },
+            { parcelaNombre:'Lote II', fechaISO:'2026-07-12',
+              reporte:{ problema_mas_frecuente:'Agalla de rama', problemas_detectados:['Agalla de rama'] } },  // sin código: cae en 'otro'
+            { parcelaNombre:'Lote I', fechaISO:'2026-07-15',
+              reporte:{ problemas_codigos:['trips'], problema_mas_frecuente:'Trips' } }                          // catalogado: NO debe aparecer
+        ],
+        observaciones: [ { parcelaNombre:'Espejo', fechaISO:'2026-07-14', problemaNoCatalogado:'Agalla de rama' } ]
+    });
+    check('sinClas.unaEntrada',  sinClas.length, 1);                       // las 3 menciones se agrupan en una
+    check('sinClas.veces',       sinClas[0].veces, 3);
+    check('sinClas.parcelas',    sinClas[0].parcelas.length, 3);           // Lote I, Lote II, Espejo
+    check('sinClas.excluyeOk',   sinClas.some(d => /trips/i.test(d.nombre)) ? 1:0, 0);
+    check('sinClas.vacio',       diagnosticosSinClasificar({ muestreos:[], observaciones:[] }).length, 0);
 
     const rp = rechazoPorParcela({ poscosecha:_pos, entregas:_ent });
     check('rechazo.parcelas',   rp.filas.length, 2);                 // solo las de guía pura
@@ -7582,13 +7672,14 @@ function renderObservaciones() {
     renderSemaforoResumen();
 }
 
-// Código de problema que devolvió la IA para la foto actual (se limpia al cambiar de foto)
+// Diagnóstico que devolvió la IA para la foto actual (se limpia al cambiar de foto)
 let _obsProblemaCod = null;
+let _obsProblemaSinCat = null;   // nombre real si la IA lo marcó fuera de catálogo
 
 function obsCargarFoto(e) {
     const file = e.target.files[0];
     if (!file) return;
-    _obsProblemaCod = null;   // foto nueva: el diagnóstico anterior ya no aplica
+    _obsProblemaCod = null; _obsProblemaSinCat = null;   // foto nueva: el diagnóstico anterior ya no aplica
 
     const preview = document.getElementById('obs-foto-preview');
     const status  = document.getElementById('obs-gps-status');
@@ -7666,7 +7757,10 @@ Responde SOLO con el siguiente JSON, sin texto adicional ni markdown:
 
 "problema_codigo" es OBLIGATORIO y debe ser UNO de esta lista exacta, sin inventar ni usar variantes:
 ${_catalogoParaPrompt()}
-Usa "sano" si el cultivo está saludable y "otro" solo si de verdad no encaja en ninguno. El campo "diagnostico" sigue en texto libre para el detalle.`;
+Usa "sano" si el cultivo está saludable. El campo "diagnostico" sigue en texto libre para el detalle.
+
+IMPORTANTE — no fuerces la clasificación: si lo que ves NO corresponde claramente a ningún código, usa "otro" y escribe el nombre técnico real en "problema_no_catalogado". Es mucho mejor un "otro" bien nombrado que encajarlo a la fuerza en una categoría parecida. Agrega al JSON:
+  "problema_no_catalogado": "nombre real o null"`;
 
     try {
         const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -7701,6 +7795,8 @@ Usa "sano" si el cultivo está saludable y "otro" solo si de verdad no encaja en
         const codIA = String(result.problema_codigo || '').trim();
         _obsProblemaCod = PROBLEMAS_AGUACATE.some(p => p.cod === codIA)
             ? codIA : codigoProblema(result.diagnostico);
+        // Nombre real cuando la IA dice que no está en el catálogo (alimenta la revisión)
+        _obsProblemaSinCat = (String(result.problema_no_catalogado || '').trim()) || null;
 
         document.getElementById('obs-plantix').value = result.diagnostico || '';
 
@@ -7760,7 +7856,8 @@ async function guardarObservacion() {
         // Código del catálogo: el que dio la IA o, si no hay, derivado del texto.
         // Es lo que permite comparar entre parcelas y en el tiempo.
         problemaCodigo: _obsProblemaCod
-            || codigoProblema(document.getElementById('obs-plantix').value || descripcion)
+            || codigoProblema(document.getElementById('obs-plantix').value || descripcion),
+        problemaNoCatalogado: _obsProblemaSinCat || null
     };
 
     DB.add('observaciones', obs);
@@ -7966,6 +8063,37 @@ function renderSemaforoResumen() {
 // MÓDULO HISTORIAL POR PARCELA
 // ═══════════════════════════════════════════════════════════
 
+// Muestra lo que la IA NO pudo clasificar. Se oculta si no hay nada, para no
+// meter ruido: solo aparece cuando el catálogo se está quedando corto de verdad.
+function _renderSinClasificar() {
+    const box = document.getElementById('hist-sin-clasificar');
+    if (!box) return;
+    const faltantes = diagnosticosSinClasificar();
+    if (!faltantes.length) { box.innerHTML = ''; return; }
+
+    const total = faltantes.reduce((s, d) => s + d.veces, 0);
+    box.innerHTML = `<div class="card" style="margin-bottom:16px;padding:14px 16px;border-left:4px solid #e07b2a">
+        <div style="font-weight:700;font-size:.95rem;margin-bottom:4px">
+            🔎 ${faltantes.length} diagnóstico${faltantes.length!==1?'s':''} fuera del catálogo
+            <span style="font-weight:500;color:var(--muted)">· ${total} registro${total!==1?'s':''}</span>
+        </div>
+        <div style="font-size:.82rem;color:var(--muted);margin-bottom:10px">
+            La IA vio esto pero no encaja en la lista de problemas conocidos, así que <strong>no entra en las comparaciones entre parcelas</strong>.
+            Si algo se repite, conviene agregarlo al catálogo.
+        </div>
+        <div class="table-wrap"><table class="tabla-cards">
+            <thead><tr><th>Diagnóstico</th><th style="text-align:right">Veces</th><th>Parcelas</th><th>Último</th></tr></thead>
+            <tbody>${faltantes.map(d => `<tr>
+                <td data-label="Diagnóstico"><strong>${d.nombre}</strong></td>
+                <td data-label="Veces" style="text-align:right">
+                    <span class="badge ${d.veces >= 3 ? 'badge-yellow' : 'badge-gray'}">${d.veces}</span></td>
+                <td data-label="Parcelas" style="font-size:.85rem">${d.parcelas.join(', ') || '—'}</td>
+                <td data-label="Último" style="white-space:nowrap;font-size:.85rem">${d.ultima ? fmt.date(d.ultima) : '—'}</td>
+            </tr>`).join('')}</tbody>
+        </table></div>
+    </div>`;
+}
+
 function renderHistorial() {
     const parcelas = DB.get('parcelas');
 
@@ -7983,6 +8111,8 @@ function renderHistorial() {
     const filtroTipo      = document.getElementById('hist-tipo-sel')?.value || '';
     const cont = document.getElementById('historial-container');
     if (!cont) return;
+
+    _renderSinClasificar();
 
     // Recopilar eventos de todas las fuentes
     const eventos = [];
@@ -9855,7 +9985,7 @@ async function enviarAnalisisCampo() {
         content.push({ type: 'text', text: 'Foto del Punto ' + p.idx });
     });
     content.push({ type: 'text', text: `Eres un agronomo experto en aguacate. Se te presentan ${fotos.length} fotos de puntos de muestreo de la parcela "${m.parcelaNombre}". Analiza todas en conjunto. Responde SOLO con JSON exacto sin texto ni markdown: {"porcentaje_arboles_con_problema":numero,"problema_mas_frecuente":"texto","severidad_promedio":"saludable|leve|moderado|severo","estado_general":"Excelente|Bueno|Aceptable|Preocupante|Critico","distribucion_severidad":{"saludable":N,"leve":N,"moderado":N,"severo":N},"problemas_codigos":["codigo1"],"recomendacion_urgente":"texto","recomendaciones_detalladas":["r1","r2","r3"]}
-"problemas_codigos" es OBLIGATORIO y solo admite códigos de esta lista exacta: ${_catalogoParaPrompt()}. Usa "sano" si no hay problemas y "otro" solo si no encaja en ninguno.` });
+"problemas_codigos" es OBLIGATORIO y solo admite códigos de esta lista exacta: ${_catalogoParaPrompt()}. Usa "sano" si no hay problemas. No fuerces la clasificación: si no encaja claramente en ninguno usa "otro" y escribe el nombre técnico real en "problemas_no_catalogados":["nombre"] (arreglo vacío si todo encajó). Es mejor un "otro" bien nombrado que una categoría parecida equivocada.` });
     try {
         const res = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
