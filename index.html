@@ -873,7 +873,7 @@
              sufijos distintos: "v2.4-D" y "v2.4-E" se leen igual de un vistazo y
              hacen imposible saber qué versión está corriendo. La fecha es informativa,
              NO identifica la versión. -->
-        <span>v2.9 · 2026-08-09</span>
+        <span>v3.0 · 2026-08-10</span>
         <!-- Herramientas de datos: solo admin (destructivas) -->
         <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
             <div style="display:flex;gap:4px">
@@ -1966,6 +1966,8 @@
                 <option value="tratamiento">💊 Tratamientos</option>
             </select>
         </div>
+        <!-- Registros cuya parcela quedó desconectada (referencia rota o renombrada) -->
+        <div id="hist-referencias-rotas"></div>
         <!-- Diagnósticos que la IA no pudo clasificar: de aquí sale qué agregar al catálogo -->
         <div id="hist-sin-clasificar"></div>
         <div id="historial-container"></div>
@@ -3096,11 +3098,35 @@ const DB = {
     },
 
     remove: (k, id) => {
-        if (_cache[k]) _cache[k] = _cache[k].filter(i => i.id !== id);
+        if (_cache[k]) _cache[k] = _cache[k].filter(i => !mismoId(i.id, id));
         _fdb.collection(k).doc(String(id)).delete()
             .catch(e => console.error('Firestore delete error:', k, e));
     }
 };
+
+// ─── COMPARACIÓN DE IDENTIFICADORES ────────────────────────
+// Los ids se generan como Date.now() + Math.random(), o sea DECIMALES
+// (ej. 1786325819440.1465). Comparar decimales con === es frágil: basta un
+// parseInt en el camino para truncarlos y romper la referencia EN SILENCIO
+// —fue exactamente lo que pasó con las observaciones—.
+// Regla única: comparar como texto. Funciona con los decimales de hoy y
+// seguiría funcionando si algún día los ids pasan a ser UUID (Fase 02),
+// porque entonces solo habría que migrar datos, no volver a tocar el código.
+// NO usar parseInt/parseFloat sobre un id: usar el valor tal cual viene.
+function mismoId(a, b) {
+    if (a == null || b == null || a === '' || b === '') return false;
+    return String(a) === String(b);
+}
+function buscarPorId(coleccion, id) {
+    return (DB.get(coleccion) || []).find(x => mismoId(x.id, id)) || null;
+}
+function parcelaPorId(id) { return buscarPorId('parcelas', id); }
+// Nombre de parcela SIEMPRE derivado del id; el campo guardado queda de respaldo
+// para registros viejos (y desaparecerá con la Fase 02).
+function nombreParcela(id, respaldo) {
+    const p = parcelaPorId(id);
+    return p ? p.nombre : (respaldo || null);
+}
 
 // ─── CARGA INICIAL ─────────────────────────────────────────
 function _withTimeout(promise, ms) {
@@ -3519,9 +3545,11 @@ function renderMuestreo() {
 }
 
 function iniciarMuestreo() {
-    const parcelaId = parseFloat(document.getElementById('muestreo-parcela-sel').value);
+    // Sin parseFloat: funcionaba con ids decimales pero daría NaN si algún día
+    // pasan a ser UUID. Se compara como texto, igual que en todo lo demás.
+    const parcelaId = document.getElementById('muestreo-parcela-sel').value;
     if (!parcelaId) return alert('Selecciona una parcela.');
-    const parcela = DB.get('parcelas').find(p => p.id == parcelaId);
+    const parcela = parcelaPorId(parcelaId);
     if (!parcela?.poligono) return alert('Esta parcela no tiene polígono definido.');
     if (_muestreoActivo?.estado === 'en_progreso') {
         if (!confirm('Ya hay un muestreo en progreso. ¿Iniciar uno nuevo?')) return;
@@ -3529,7 +3557,7 @@ function iniciarMuestreo() {
     const puntos = generarPuntosMuestreo(parcela.poligono, parcela.ha);
     _muestreoActivo = {
         id: Date.now(),
-        parcelaId,
+        parcelaId: parcela.id,        // el id REAL, no el texto del <select>
         parcelaNombre: parcela.nombre,
         fechaISO: new Date().toISOString().split('T')[0],
         fecha: new Date().toLocaleDateString('es', { day:'2-digit', month:'short', year:'numeric' }),
@@ -3757,7 +3785,7 @@ function initMapaMuestreo(m) {
             { attribution: 'Esri', maxZoom: 20 }).addTo(_mapMuestreo);
 
         // Polígono de la parcela
-        const parcela = DB.get('parcelas').find(p => p.id === m.parcelaId);
+        const parcela = parcelaPorId(m.parcelaId);
         if (parcela?.poligono)
             L.polygon(parcela.poligono, { color: '#95d5b2', weight: 2, fillOpacity: 0.1 }).addTo(_mapMuestreo);
 
@@ -3918,6 +3946,41 @@ function problemasDeMuestreo(m) {
 }
 function problemaDeObservacion(o) {
     return o?.problemaCodigo || codigoProblema(o?.plantixDiagnostico || o?.descripcion) || null;
+}
+
+// ── Las referencias rotas se delatan solas ──────────────────
+// El fallo del parseInt pasó semanas sin que nadie lo notara porque la app nunca
+// avisó: diez observaciones se guardaron sin parcela y se descubrió al exportar.
+// Esto revisa dos cosas distintas:
+//   · por ID    → registros que apuntan a una parcela inexistente (referencia rota)
+//   · por NOMBRE→ cosechas/labores/tratamientos cuyo nombre de parcela ya no existe.
+//     Eso pasa al RENOMBRAR una parcela y es el síntoma que la Fase 02 elimina.
+function referenciasRotas() {
+    const parcelas = DB.get('parcelas');
+    if (!parcelas.length) return { porId: [], porNombre: [], total: 0 };
+    const nombres = new Set(parcelas.map(p => _normTexto(p.nombre)));
+
+    const porId = [];
+    [['observaciones','parcelaId'], ['muestreos','parcelaId'], ['indices','parcelaId']].forEach(([col, campo]) => {
+        const rotos = DB.get(col).filter(r => r[campo] != null && !parcelaPorId(r[campo]));
+        if (rotos.length) porId.push({ coleccion: col, registros: rotos.length });
+    });
+
+    const porNombre = [];
+    [['cosechas','parcela'], ['labores','parcela'], ['tratamientos','parcela'], ['gastos','parcela']].forEach(([col, campo]) => {
+        const huerfanos = {};
+        DB.get(col).forEach(r => {
+            const v = r[campo];
+            if (!v || _normTexto(v) === 'general') return;      // "General" es un valor válido
+            if (nombres.has(_normTexto(v))) return;
+            huerfanos[v] = (huerfanos[v] || 0) + 1;
+        });
+        Object.entries(huerfanos).forEach(([nombre, n]) =>
+            porNombre.push({ coleccion: col, nombre, registros: n }));
+    });
+
+    return { porId, porNombre,
+             total: porId.reduce((s,x)=>s+x.registros,0) + porNombre.reduce((s,x)=>s+x.registros,0) };
 }
 
 // ── El catálogo se delata solo ──────────────────────────────
@@ -4757,6 +4820,17 @@ function _selfTestCalculos() {
     check('audit.mismoLugar', audQuieto.alertas.filter(a=>a.msg.includes('mismo lugar')).length, 1);
     check('audit.sinDatos',   auditarMuestreo({ puntos: [] }).sinDatos ? 1 : 0, 1);
 
+    // Identificadores: los ids son DECIMALES (Date.now()+Math.random()).
+    // Estos casos fijan el fallo que dejó 10 observaciones sin parcela.
+    const idDec = 1786325819440.1465;
+    check('id.mismo',        mismoId(idDec, idDec) ? 1:0, 1);
+    check('id.comoTexto',    mismoId(idDec, String(idDec)) ? 1:0, 1);   // <select> devuelve texto
+    check('id.parseIntRompe', mismoId(idDec, parseInt(String(idDec))) ? 1:0, 0);  // el bug original
+    check('id.nulo',         mismoId(null, idDec) ? 1:0, 0);
+    check('id.vacio',        mismoId('', idDec) ? 1:0, 0);
+    check('id.distintos',    mismoId(idDec, 1786325819440.9111) ? 1:0, 0);  // misma parte entera
+    check('id.uuidFuturo',   mismoId('a1b2-c3d4', 'a1b2-c3d4') ? 1:0, 1);   // listo para Fase 02
+
     // Vocabulario cerrado: distintas redacciones deben caer en el MISMO código
     check('vocab.trips1',    codigoProblema('Trips en hoja joven') === 'trips' ? 1:0, 1);
     check('vocab.trips2',    codigoProblema('daño por TRIPS en brotes') === 'trips' ? 1:0, 1);
@@ -5219,6 +5293,49 @@ function migrarIteranzaAPoscosecha() {
 
     localStorage.setItem('hda_migr_poscosecha', 'done');
     console.log(`[migración] ${viejos.length} registro(s) Iteranza movidos a poscosecha.`);
+}
+
+// ── REPARACIÓN: observaciones que perdieron la parcela ──
+// El `parseInt` de guardarObservacion truncaba el id decimal de la parcela, así
+// que la referencia quedaba rota y el nombre vacío. Se intenta recuperar en tres
+// pasos, del más fiable al menos: id truncado inequívoco → GPS dentro del
+// polígono → se deja marcada para revisión manual (no se inventa nada).
+function repararParcelasObservaciones() {
+    if (localStorage.getItem('hda_migr_obsparcela') === 'done') return;
+    const obs = DB.get('observaciones');
+    const parcelas = DB.get('parcelas');
+    if (!obs.length || !parcelas.length) return;   // sin datos aún: reintentar en otra carga
+
+    let porId = 0, porGps = 0, sinResolver = 0;
+    obs.forEach(o => {
+        if (parcelaPorId(o.parcelaId)) return;                    // ya resuelve: nada que hacer
+
+        // 1) El id truncado sigue identificando a UNA sola parcela
+        let destino = null;
+        if (o.parcelaId != null) {
+            const cand = parcelas.filter(p => Math.trunc(p.id) === Math.trunc(o.parcelaId));
+            if (cand.length === 1) { destino = cand[0]; porId++; }
+        }
+        // 2) GPS dentro del polígono de alguna parcela
+        if (!destino) {
+            const lat = parseFloat(o.lat), lng = parseFloat(o.lng);
+            if (isFinite(lat) && isFinite(lng)) {
+                destino = parcelas.find(p => Array.isArray(p.poligono) && p.poligono.length >= 3
+                                             && puntoDentroDePoligono(lat, lng, p.poligono)) || null;
+                if (destino) porGps++;
+            }
+        }
+        if (destino) {
+            DB.update('observaciones', o.id, {
+                parcelaId: destino.id, parcelaNombre: destino.nombre,
+                _parcelaRecuperada: true          // queda trazado que no fue captura original
+            });
+        } else { sinResolver++; }
+    });
+
+    localStorage.setItem('hda_migr_obsparcela', 'done');
+    if (porId || porGps || sinResolver)
+        console.log(`[reparación] observaciones: ${porId} por id, ${porGps} por GPS, ${sinResolver} sin resolver.`);
 }
 
 // ── MIGRACIÓN: histórico satelital de localStorage → Firebase ──
@@ -6526,7 +6643,7 @@ function confirmarTodo() {
                 notas:     `Creado automáticamente desde factura ${gasto.comprobante || ''}`.trim()
             });
         } else {
-            const ins = DB.get('insumos').find(x => x.id === a.id);
+            const ins = buscarPorId('insumos', a.id);
             if (ins) {
                 const campos = { stock: (ins.stock || 0) + (a.stockAgregar || 0) };
                 if (a.precio) campos.precio = a.precio;
@@ -7117,7 +7234,9 @@ async function actualizarIndices() {
         DB.add('indices', {
             fecha: fechaHoy,
             parcelaId: p.id,
-            parcelaNombre: p.nombre,
+            // Sin `parcelaNombre`: se deriva del id al leer (nombreParcela). Duplicarlo
+            // agregaba superficie de migración para la Fase 02 y se desactualiza si
+            // renombras la parcela. Los registros viejos que lo traen siguen sirviendo.
             ndvi: idxVal(pd.ndvi),
             ndre: idxVal(pd.ndre),
             evi:  idxVal(pd.evi),
@@ -7558,7 +7677,7 @@ function extraerGPSDeFoto(e) {
 // ─── EDICIÓN DE PARCELA ────────────────────────────────────
 function editarParcela(id) {
     const parcelas = DB.get('parcelas');
-    const p = parcelas.find(x => x.id === id);
+    const p = parcelas.find(x => mismoId(x.id, id));
     if (!p) return;
     _editParcelaId = id;
 
@@ -7591,7 +7710,7 @@ function guardarEdicionParcela() {
     const nombre = document.getElementById('p-nombre').value.trim();
     if (!nombre) return alert('El nombre de la parcela es obligatorio.');
 
-    if (!DB.get('parcelas').some(x => x.id === _editParcelaId)) return;
+    if (!DB.get('parcelas').some(x => mismoId(x.id, _editParcelaId))) return;
 
     const lat      = parseFloat(document.getElementById('p-lat').value) || null;
     const lng      = parseFloat(document.getElementById('p-lng').value) || null;
@@ -7652,7 +7771,7 @@ function renderObservaciones() {
     const SEV_COLOR = { leve:'#f57f17', moderado:'#e65100', severo:'#d32f2f' };
     const SEV_ICON  = { leve:'🟡', moderado:'🟠', severo:'🔴' };
     cont.innerHTML = obs.map(o => {
-        const p = parcelas.find(x => x.id === o.parcelaId);
+        const p = parcelas.find(x => mismoId(x.id, o.parcelaId));
         const sevCol = SEV_COLOR[o.severidad] || '#888';
         return `<div style="padding:12px 16px;border-bottom:1px solid #f0f0f0">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">
@@ -7827,13 +7946,16 @@ IMPORTANTE — no fuerces la clasificación: si lo que ves NO corresponde claram
 }
 
 async function guardarObservacion() {
-    const parcelaId  = parseInt(document.getElementById('obs-parcela').value) || null;
+    // El valor del <select> se toma TAL CUAL: un parseInt aquí truncaba el id
+    // decimal y dejaba la observación sin parcela (10 registros se perdieron así).
+    const parcelaVal = document.getElementById('obs-parcela').value;
     const descripcion = document.getElementById('obs-descripcion').value.trim();
-    if (!parcelaId)    return alert('Selecciona una parcela.');
+    if (!parcelaVal)   return alert('Selecciona una parcela.');
     if (!descripcion)  return alert('Escribe una descripción del problema.');
 
-    const parcelas = DB.get('parcelas');
-    const parcela  = parcelas.find(p => p.id === parcelaId);
+    const parcela   = parcelaPorId(parcelaVal);
+    if (!parcela)   return alert('No se encontró esa parcela. Vuelve a seleccionarla.');
+    const parcelaId = parcela.id;   // el id REAL de la parcela, sin truncar
 
     // Foto (puede ser null si no subieron)
     const preview = document.getElementById('obs-foto-preview');
@@ -7964,7 +8086,7 @@ function calcularAlertasPredictivas() {
         // ── Regla 2: Deficiencia nutricional (NDRE sostenido) ─
         // NDRE ha bajado en 2 snapshots separados ≥14 días
         const histP = historial
-            .filter(h => h.parcelaId === p.id && h.ndre != null)
+            .filter(h => mismoId(h.parcelaId, p.id) && h.ndre != null)
             .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
 
         if (histP.length >= 2) {
@@ -7987,7 +8109,7 @@ function calcularAlertasPredictivas() {
 
         // ── Regla 3: Estrés severo NDVI caída brusca ≥20% en ≤5 días ─
         const histNdvi = historial
-            .filter(h => h.parcelaId === p.id && h.ndvi != null)
+            .filter(h => mismoId(h.parcelaId, p.id) && h.ndvi != null)
             .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
 
         if (histNdvi.length >= 2) {
@@ -8014,7 +8136,7 @@ function calcularAlertasPredictivas() {
         const diasReciente = 14;
         const cutoff = new Date(Date.now() - diasReciente * 86400000).toISOString().split('T')[0];
         const obsSeveras = observaciones.filter(o =>
-            o.parcelaId === p.id && o.severidad === 'severo' && (o.fechaISO || '') >= cutoff
+            mismoId(o.parcelaId, p.id) && o.severidad === 'severo' && (o.fechaISO || '') >= cutoff
         );
         if (obsSeveras.length) {
             alertasP.push({
@@ -8028,7 +8150,7 @@ function calcularAlertasPredictivas() {
 
         // ── Regla 5: Observación moderada reciente ────────
         const obsModeras = observaciones.filter(o =>
-            o.parcelaId === p.id && o.severidad === 'moderado' && (o.fechaISO || '') >= cutoff
+            mismoId(o.parcelaId, p.id) && o.severidad === 'moderado' && (o.fechaISO || '') >= cutoff
         );
         if (obsModeras.length && maxNivel === 'verde') {
             alertasP.push({
@@ -8071,6 +8193,26 @@ function renderSemaforoResumen() {
 
 // Muestra lo que la IA NO pudo clasificar. Se oculta si no hay nada, para no
 // meter ruido: solo aparece cuando el catálogo se está quedando corto de verdad.
+// Aviso de referencias rotas. Se oculta si no hay ninguna.
+function _renderReferenciasRotas() {
+    const box = document.getElementById('hist-referencias-rotas');
+    if (!box) return;
+    const r = referenciasRotas();
+    if (!r.total) { box.innerHTML = ''; return; }
+    const fila = (txt, n) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-top:1px solid #f0f0f0;font-size:.85rem">
+        <span>${txt}</span><strong>${n}</strong></div>`;
+    box.innerHTML = `<div class="card" style="margin-bottom:16px;padding:14px 16px;border-left:4px solid #c62828">
+        <div style="font-weight:700;font-size:.95rem;margin-bottom:4px">⚠️ ${r.total} registro${r.total!==1?'s':''} con la parcela desconectada</div>
+        <div style="font-size:.82rem;color:var(--muted);margin-bottom:8px">
+            Estos registros no se pueden atribuir a ninguna parcela, así que <strong>quedan fuera de rentabilidad y de las comparaciones</strong>.
+        </div>
+        ${r.porId.map(x => fila(`${x.coleccion}: referencia rota`, x.registros)).join('')}
+        ${r.porNombre.map(x => fila(`${x.coleccion}: parcela «${x.nombre}» ya no existe`, x.registros)).join('')}
+        ${r.porNombre.length ? `<div style="font-size:.78rem;color:var(--muted);margin-top:8px">
+            Los de nombre suelen aparecer al <strong>renombrar una parcela</strong>: los registros viejos conservan el nombre anterior.</div>` : ''}
+    </div>`;
+}
+
 function _renderSinClasificar() {
     const box = document.getElementById('hist-sin-clasificar');
     if (!box) return;
@@ -8113,11 +8255,12 @@ function renderHistorial() {
         });
     }
 
-    const filtroParcelaId = parseInt(document.getElementById('hist-parcela-sel')?.value) || null;
+    const filtroParcelaId = document.getElementById('hist-parcela-sel')?.value || null;
     const filtroTipo      = document.getElementById('hist-tipo-sel')?.value || '';
     const cont = document.getElementById('historial-container');
     if (!cont) return;
 
+    _renderReferenciasRotas();
     _renderSinClasificar();
 
     // Recopilar eventos de todas las fuentes
@@ -8126,7 +8269,7 @@ function renderHistorial() {
     // 1. Observaciones de campo
     if (!filtroTipo || filtroTipo === 'observacion') {
         DB.get('observaciones').forEach(o => {
-            if (filtroParcelaId && o.parcelaId !== filtroParcelaId) return;
+            if (filtroParcelaId && !mismoId(o.parcelaId, filtroParcelaId)) return;
             eventos.push({
                 tipo: 'observacion',
                 fecha: o.fechaISO || o.fecha,
@@ -8155,7 +8298,7 @@ function renderHistorial() {
                 fecha: h.fecha,
                 fechaLabel: new Date(h.fecha).toLocaleDateString('es',{day:'2-digit',month:'short',year:'numeric'}),
                 parcelaId: h.parcelaId,
-                parcelaNombre: h.parcelaNombre,
+                parcelaNombre: nombreParcela(h.parcelaId, h.parcelaNombre),
                 titulo: '🛰️ Actualización satelital',
                 detalle: vals || 'Sin datos de índices',
                 badge: null,
@@ -8169,7 +8312,7 @@ function renderHistorial() {
         DB.get('gastos').forEach(g => {
             if (!g.parcela || g.parcela === 'General') return;
             const parc = parcelas.find(p => p.nombre === g.parcela);
-            if (filtroParcelaId && parc?.id !== filtroParcelaId) return;
+            if (filtroParcelaId && !mismoId(parc?.id, filtroParcelaId)) return;
             eventos.push({
                 tipo: 'insumo',
                 fecha: g.fecha,
@@ -8189,7 +8332,7 @@ function renderHistorial() {
         const RES_COLOR = { Pendiente:'#f57f17', Mejoró:'#2d6a4f', 'Sin cambio':'#607d8b', Empeoró:'#d32f2f' };
         DB.get('tratamientos').forEach(t => {
             const parc = parcelas.find(p => p.nombre === t.parcela);
-            if (filtroParcelaId && parc?.id !== filtroParcelaId) return;
+            if (filtroParcelaId && !mismoId(parc?.id, filtroParcelaId)) return;
             eventos.push({
                 tipo: 'tratamiento',
                 fecha: t.fecha,
@@ -8570,7 +8713,7 @@ function construirExportIA() {
         const aud = auditarMuestreo(m);
         return {
             fecha: m.fechaISO || m.fecha || null,
-            parcela: m.parcelaNombre || null,
+            parcela: nombreParcela(m.parcelaId, m.parcelaNombre),
             puntos_analizados: n,
             puntos_totales: parseInt(m.totalPuntos) || null,
             // Cuánto mueve UNA sola foto el porcentaje: clave para no leer ruido como tendencia
@@ -8596,7 +8739,7 @@ function construirExportIA() {
     // ── Observaciones (sin foto) ──
     const obsExport = observaciones.map(o => ({
         fecha: o.fechaISO || o.fecha || null,
-        parcela: o.parcelaNombre || null,
+        parcela: nombreParcela(o.parcelaId, o.parcelaNombre),
         severidad: o.severidad || null,
         diagnostico_ia: o.plantixDiagnostico || null,
         descripcion: o.descripcion || null,
@@ -8679,7 +8822,7 @@ function construirExportIA() {
             observaciones: obsExport,
             tratamientos: traExport,
             indices_satelitales: indices.map(h => ({
-                fecha: h.fecha, parcela: h.parcelaNombre || null,
+                fecha: h.fecha, parcela: nombreParcela(h.parcelaId, h.parcelaNombre),
                 ndvi: h.ndvi ?? null, ndre: h.ndre ?? null, evi: h.evi ?? null, ndmi: h.ndmi ?? null
             })).sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)))
         },
@@ -9580,7 +9723,7 @@ function guardarTratamiento() {
 }
 
 function actualizarResultadoTratamiento(id, resultado) {
-    if (!DB.get('tratamientos').some(t => t.id === id)) return;
+    if (!DB.get('tratamientos').some(t => mismoId(t.id, id))) return;
     DB.update('tratamientos', id, { resultado });
     renderTratamientos();
 }
@@ -9772,7 +9915,11 @@ function entrarConRol() {
     aplicarRol(_rolActual);
     loadApiKey();
     renderFacturasHistory();
-    initFirestore().then(() => { migrarIteranzaAPoscosecha(); migrarLotesCosecha(); migrarIndicesAFirebase(); render(); });
+    initFirestore().then(() => {
+        migrarIteranzaAPoscosecha(); migrarLotesCosecha(); migrarIndicesAFirebase();
+        repararParcelasObservaciones();
+        render();
+    });
 }
 
 function esAdmin() { return _rolActual === 'admin'; }
