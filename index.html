@@ -868,9 +868,12 @@
     </div>
 
     <div class="sidebar-footer" style="display:flex;flex-direction:column;gap:6px">
-        <!-- Sello de compilación: subir SIEMPRE al publicar. Sirve para saber, desde la app,
-             si el navegador está corriendo el archivo nuevo o uno cacheado. -->
-        <span>v2.4 · build 2026-08-09-D</span>
+        <!-- Sello de compilación: SUBIR EL NÚMERO en cada publicación, sin excepción.
+             Un solo contador (v2.5 → v2.6 → v2.7...). No reutilizar un número con
+             sufijos distintos: "v2.4-D" y "v2.4-E" se leen igual de un vistazo y
+             hacen imposible saber qué versión está corriendo. La fecha es informativa,
+             NO identifica la versión. -->
+        <span>v2.5 · 2026-08-09</span>
         <!-- Herramientas de datos: solo admin (destructivas) -->
         <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
             <div style="display:flex;gap:4px">
@@ -1511,7 +1514,11 @@
                     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                         <label style="cursor:pointer;background:#2d6a4f;color:#fff;padding:10px 16px;border-radius:8px;font-size:14px;font-weight:600;display:inline-flex;align-items:center;gap:6px">
                             📷 Tomar / Seleccionar Foto
-                            <input type="file" id="obs-foto-input" accept="image/*" capture="environment" style="display:none" onchange="obsCargarFoto(event)">
+                            <!-- SIN `capture`: aquí sí debe poder elegirse de la galería. Además el GPS
+                                 se lee del EXIF de la foto, y las tomadas desde el navegador suelen
+                                 llegar sin EXIF; las de la galería sí lo traen. En Muestreo y Modo campo
+                                 `capture` SÍ se mantiene: ahí es el control anti-fraude. -->
+                            <input type="file" id="obs-foto-input" accept="image/*" style="display:none" onchange="obsCargarFoto(event)">
                         </label>
                         <span id="obs-gps-status" style="font-size:12px;color:#888">Sin foto aún</span>
                     </div>
