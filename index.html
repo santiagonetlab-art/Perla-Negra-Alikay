@@ -873,7 +873,7 @@
              sufijos distintos: "v2.4-D" y "v2.4-E" se leen igual de un vistazo y
              hacen imposible saber qué versión está corriendo. La fecha es informativa,
              NO identifica la versión. -->
-        <span>v3.0 · 2026-08-10</span>
+        <span>v3.1 · 2026-08-10</span>
         <!-- Herramientas de datos: solo admin (destructivas) -->
         <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
             <div style="display:flex;gap:4px">
@@ -3955,6 +3955,12 @@ function problemaDeObservacion(o) {
 //   · por ID    → registros que apuntan a una parcela inexistente (referencia rota)
 //   · por NOMBRE→ cosechas/labores/tratamientos cuyo nombre de parcela ya no existe.
 //     Eso pasa al RENOMBRAR una parcela y es el síntoma que la Fase 02 elimina.
+// Valores que significan "no es de una parcela concreta" — son intencionales, no
+// referencias rotas. Los actuales salen de los <select> ("General" en gastos,
+// "Toda la finca" en labores y cosechas); los demás vienen de versiones antiguas.
+const SIN_PARCELA = new Set(['general','toda la finca','todas','todos',
+                             'todas las parcelas','ninguna','n/a','sin parcela','-']);
+
 function referenciasRotas() {
     const parcelas = DB.get('parcelas');
     if (!parcelas.length) return { porId: [], porNombre: [], total: 0 };
@@ -3963,7 +3969,7 @@ function referenciasRotas() {
     const porId = [];
     [['observaciones','parcelaId'], ['muestreos','parcelaId'], ['indices','parcelaId']].forEach(([col, campo]) => {
         const rotos = DB.get(col).filter(r => r[campo] != null && !parcelaPorId(r[campo]));
-        if (rotos.length) porId.push({ coleccion: col, registros: rotos.length });
+        if (rotos.length) porId.push({ coleccion: col, registros: rotos.length, items: rotos });
     });
 
     const porNombre = [];
@@ -3971,7 +3977,7 @@ function referenciasRotas() {
         const huerfanos = {};
         DB.get(col).forEach(r => {
             const v = r[campo];
-            if (!v || _normTexto(v) === 'general') return;      // "General" es un valor válido
+            if (!v || SIN_PARCELA.has(_normTexto(v))) return;   // valor intencional, no huérfano
             if (nombres.has(_normTexto(v))) return;
             huerfanos[v] = (huerfanos[v] || 0) + 1;
         });
@@ -8193,23 +8199,79 @@ function renderSemaforoResumen() {
 
 // Muestra lo que la IA NO pudo clasificar. Se oculta si no hay nada, para no
 // meter ruido: solo aparece cuando el catálogo se está quedando corto de verdad.
+// Parcela más cercana a un punto (por el centro de su polígono). Sirve como
+// SUGERENCIA cuando el GPS cayó fuera de todos los polígonos: la decisión es del usuario.
+function _parcelaMasCercana(lat, lng) {
+    let mejor = null, dMin = Infinity;
+    DB.get('parcelas').forEach(p => {
+        if (!Array.isArray(p.poligono) || p.poligono.length < 3) return;
+        const cLat = p.poligono.reduce((s,c)=>s+c[0],0) / p.poligono.length;
+        const cLng = p.poligono.reduce((s,c)=>s+c[1],0) / p.poligono.length;
+        const d = _distanciaMetros(lat, lng, cLat, cLng);
+        if (d < dMin) { dMin = d; mejor = p; }
+    });
+    return mejor ? { parcela: mejor, metros: Math.round(dMin) } : null;
+}
+
+// Asignar la parcela a mano desde la tarjeta de integridad
+function asignarParcelaObservacion(obsId, parcelaId) {
+    if (!parcelaId) return;
+    const p = parcelaPorId(parcelaId);
+    if (!p) return alert('No se encontró esa parcela.');
+    DB.update('observaciones', obsId, {
+        parcelaId: p.id, parcelaNombre: p.nombre, _parcelaAsignadaManual: true
+    });
+    renderHistorial();
+    renderObservaciones();
+}
+
 // Aviso de referencias rotas. Se oculta si no hay ninguna.
 function _renderReferenciasRotas() {
     const box = document.getElementById('hist-referencias-rotas');
     if (!box) return;
     const r = referenciasRotas();
     if (!r.total) { box.innerHTML = ''; return; }
+    const parcelas = DB.get('parcelas');
     const fila = (txt, n) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-top:1px solid #f0f0f0;font-size:.85rem">
         <span>${txt}</span><strong>${n}</strong></div>`;
+
+    // Las observaciones SÍ se pueden corregir aquí mismo: quien las tomó sabe dónde fue
+    const obsRotas = (r.porId.find(x => x.coleccion === 'observaciones')?.items) || [];
+    const filaObs = o => {
+        const lat = parseFloat(o.lat), lng = parseFloat(o.lng);
+        const cerca = (isFinite(lat) && isFinite(lng)) ? _parcelaMasCercana(lat, lng) : null;
+        const pista = cerca
+            ? `más cercana: <strong>${cerca.parcela.nombre}</strong> (a ${cerca.metros} m)`
+            : '<span style="color:#e07b2a">sin GPS</span>';
+        const dx = o.plantixDiagnostico || (o.descripcion || '').slice(0, 40) || 'observación';
+        return `<div style="padding:8px 0;border-top:1px solid #f0f0f0">
+            <div style="font-size:.84rem;margin-bottom:4px">
+                <strong>${o.fecha || o.fechaISO || ''}</strong> · ${dx} <span style="color:var(--muted)">· ${pista}</span>
+            </div>
+            <select onchange="asignarParcelaObservacion(${o.id}, this.value)" style="width:100%;padding:6px 8px;font-size:.85rem">
+                <option value="">— Asignar parcela —</option>
+                ${parcelas.map(p => `<option value="${p.id}" ${cerca && mismoId(cerca.parcela.id, p.id) ? 'selected' : ''}>${p.nombre}</option>`).join('')}
+            </select>
+        </div>`;
+    };
+
     box.innerHTML = `<div class="card" style="margin-bottom:16px;padding:14px 16px;border-left:4px solid #c62828">
         <div style="font-weight:700;font-size:.95rem;margin-bottom:4px">⚠️ ${r.total} registro${r.total!==1?'s':''} con la parcela desconectada</div>
         <div style="font-size:.82rem;color:var(--muted);margin-bottom:8px">
             Estos registros no se pueden atribuir a ninguna parcela, así que <strong>quedan fuera de rentabilidad y de las comparaciones</strong>.
         </div>
-        ${r.porId.map(x => fila(`${x.coleccion}: referencia rota`, x.registros)).join('')}
+        ${r.porId.filter(x => x.coleccion !== 'observaciones').map(x => fila(`${x.coleccion}: referencia rota`, x.registros)).join('')}
         ${r.porNombre.map(x => fila(`${x.coleccion}: parcela «${x.nombre}» ya no existe`, x.registros)).join('')}
         ${r.porNombre.length ? `<div style="font-size:.78rem;color:var(--muted);margin-top:8px">
             Los de nombre suelen aparecer al <strong>renombrar una parcela</strong>: los registros viejos conservan el nombre anterior.</div>` : ''}
+        ${obsRotas.length ? `
+            <div style="margin-top:12px;padding-top:10px;border-top:2px solid #f0f0f0">
+                <div style="font-weight:700;font-size:.88rem;margin-bottom:2px">${obsRotas.length} ${obsRotas.length===1?'observación sin parcela — asígnala':'observaciones sin parcela — asígnalas'} aquí</div>
+                <div style="font-size:.78rem;color:var(--muted);margin-bottom:4px">
+                    Se propone la parcela más cercana según el GPS, pero <strong>confirma tú</strong>: el GPS puede caer fuera del polígono dibujado.
+                </div>
+                ${obsRotas.map(filaObs).join('')}
+            </div>` : ''}
     </div>`;
 }
 
