@@ -873,7 +873,7 @@
              sufijos distintos: "v2.4-D" y "v2.4-E" se leen igual de un vistazo y
              hacen imposible saber qué versión está corriendo. La fecha es informativa,
              NO identifica la versión. -->
-        <span>v2.5 · 2026-08-09</span>
+        <span>v2.6 · 2026-08-09</span>
         <!-- Herramientas de datos: solo admin (destructivas) -->
         <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
             <div style="display:flex;gap:4px">
@@ -3005,7 +3005,7 @@ const _fdb = firebase.firestore();
 // ─── COLECCIONES ────────────────────────────────────────────
 const COLECCIONES = ['parcelas','cosechas','entregas','poscosecha','gastos','labores','insumos',
                      'trabajadores','jornadas','muestreos','observaciones',
-                     'tratamientos','facturas_scan','ciclos'];
+                     'tratamientos','facturas_scan','ciclos','indices'];
 
 // ─── SERIALIZACIÓN (Firestore no soporta arrays anidados) ───
 // Los arrays anidados (ej: coordenadas de polígonos) se convierten
@@ -3813,6 +3813,92 @@ function detenerGPSMuestreo() {
     _muestreoUserMarker = null;
 }
 
+// ═══════════════════════════════════════════════════════════
+// VOCABULARIO CERRADO DE PROBLEMAS  (base de todo el análisis)
+// ═══════════════════════════════════════════════════════════
+// Sin esto la IA inventa un nombre distinto cada vez ("Trips", "trips en hoja
+// joven", "daño por trips") y CUALQUIER comparación entre parcelas o en el tiempo
+// mide redacción, no campo. Aquí se fija la lista; la IA debe elegir de ella.
+// EDITABLE: agrega/quita según lo que realmente veas en la hacienda.
+const PROBLEMAS_AGUACATE = [
+    // ── Plagas ──
+    { cod:'trips',            nombre:'Trips',                      tipo:'plaga',       claves:['trips','thrips'] },
+    { cod:'acaros',           nombre:'Ácaros / arañita roja',      tipo:'plaga',       claves:['acaro','aranita','arana roja','oligonychus','tetranychus'] },
+    { cod:'barrenador_rama',  nombre:'Barrenador de rama o tallo', tipo:'plaga',       claves:['barrenador de rama','barrenador del tallo','copturus'] },
+    { cod:'barrenador_fruto', nombre:'Barrenador del fruto',       tipo:'plaga',       claves:['barrenador de fruto','barrenador del fruto','stenoma','heilipus'] },
+    { cod:'mosca_blanca',     nombre:'Mosca blanca',               tipo:'plaga',       claves:['mosca blanca','aleurod'] },
+    { cod:'cochinilla',       nombre:'Cochinilla o escama',        tipo:'plaga',       claves:['cochinilla','escama','piojo harinoso'] },
+    { cod:'hormiga',          nombre:'Hormiga arriera',            tipo:'plaga',       claves:['hormiga','arriera'] },
+    // ── Enfermedades ──
+    { cod:'antracnosis',      nombre:'Antracnosis',                tipo:'enfermedad',  claves:['antracnosis','colletotrichum'] },
+    { cod:'rona',             nombre:'Roña / sarna',               tipo:'enfermedad',  claves:['rona','sarna','sphaceloma'] },
+    { cod:'phytophthora',     nombre:'Phytophthora (pudrición de raíz)', tipo:'enfermedad', claves:['phytophthora','fitoftora','pudricion de raiz','tristeza del aguacate'] },
+    { cod:'cercospora',       nombre:'Cercospora / mancha foliar',  tipo:'enfermedad', claves:['cercospora','mancha foliar','mancha de la hoja'] },
+    { cod:'oidio',            nombre:'Oídio / cenicilla',          tipo:'enfermedad',  claves:['oidio','cenicilla','mildiu polvoriento'] },
+    { cod:'pudricion_pedunculo', nombre:'Pudrición peduncular',    tipo:'enfermedad',  claves:['pudricion peduncular','peduncul'] },
+    // ── Deficiencias nutricionales ──
+    { cod:'def_zinc',      nombre:'Deficiencia de zinc',      tipo:'deficiencia', claves:['zinc'] },
+    { cod:'def_hierro',    nombre:'Deficiencia de hierro',    tipo:'deficiencia', claves:['hierro','clorosis ferrica'] },
+    { cod:'def_boro',      nombre:'Deficiencia de boro',      tipo:'deficiencia', claves:['boro'] },
+    { cod:'def_nitrogeno', nombre:'Deficiencia de nitrógeno', tipo:'deficiencia', claves:['nitrogeno'] },
+    { cod:'def_magnesio',  nombre:'Deficiencia de magnesio',  tipo:'deficiencia', claves:['magnesio'] },
+    { cod:'def_calcio',    nombre:'Deficiencia de calcio',    tipo:'deficiencia', claves:['calcio'] },
+    // ── Abiótico / manejo ──
+    { cod:'estres_hidrico', nombre:'Estrés hídrico',            tipo:'abiotico', claves:['estres hidrico','falta de agua','sequia','marchit'] },
+    { cod:'anegamiento',    nombre:'Exceso de agua / anegamiento', tipo:'abiotico', claves:['anegamiento','encharca','exceso de agua','suelo saturado'] },
+    { cod:'quemadura_sol',  nombre:'Quemadura por sol',         tipo:'abiotico', claves:['quemadura por sol','golpe de sol','sunburn'] },
+    { cod:'dano_frio',      nombre:'Daño por frío o helada',    tipo:'abiotico', claves:['helada','dano por frio','congelamiento'] },
+    { cod:'dano_viento',    nombre:'Daño por viento',           tipo:'abiotico', claves:['viento'] },
+    { cod:'fitotoxicidad',  nombre:'Fitotoxicidad',             tipo:'abiotico', claves:['fitotox','quemado por producto'] },
+    // ── Cierre ──
+    { cod:'sano', nombre:'Sano', tipo:'otro', claves:['sano','saludable','sin problema','sin sintomas'] },
+    { cod:'otro', nombre:'Otro / no identificado', tipo:'otro', claves:[] }
+];
+
+// Minúsculas y sin tildes, para que "Roña" y "rona" sean lo mismo
+function _normTexto(s) {
+    return String(s == null ? '' : s).toLowerCase()
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/\s+/g, ' ').trim();
+}
+
+// Texto libre → código del catálogo. Permite analizar TAMBIÉN los registros
+// viejos (se deriva al leer, sin migrar ni reescribir nada).
+function codigoProblema(texto) {
+    const t = _normTexto(texto);
+    if (!t) return null;
+    for (const p of PROBLEMAS_AGUACATE) {
+        for (const k of p.claves) if (t.includes(_normTexto(k))) return p.cod;
+    }
+    return 'otro';
+}
+function nombreProblema(cod) {
+    const p = PROBLEMAS_AGUACATE.find(x => x.cod === cod);
+    return p ? p.nombre : (cod || '—');
+}
+function tipoProblema(cod) {
+    const p = PROBLEMAS_AGUACATE.find(x => x.cod === cod);
+    return p ? p.tipo : 'otro';
+}
+// Lista para el prompt: la IA debe responder con estos códigos, no con texto libre
+function _catalogoParaPrompt() {
+    return PROBLEMAS_AGUACATE.filter(p => p.cod !== 'otro')
+        .map(p => `${p.cod} (${p.nombre})`).join(', ') + ', otro';
+}
+
+// ── Acceso normalizado: prefiere el código guardado, si no lo deriva del texto ──
+// Así los muestreos y observaciones YA registrados entran al análisis sin migración.
+function problemasDeMuestreo(m) {
+    const r = m?.reporte || {};
+    if (Array.isArray(r.problemas_codigos) && r.problemas_codigos.length)
+        return [...new Set(r.problemas_codigos.filter(Boolean))];
+    const textos = [r.problema_mas_frecuente, ...(Array.isArray(r.problemas_detectados) ? r.problemas_detectados : [])];
+    return [...new Set(textos.map(codigoProblema).filter(Boolean))];
+}
+function problemaDeObservacion(o) {
+    return o?.problemaCodigo || codigoProblema(o?.plantixDiagnostico || o?.descripcion) || null;
+}
+
 // ─── RESOLUCIÓN DE LAS FOTOS QUE SE ENVÍAN A LA IA ─────────
 // El coste en tokens depende SOLO de las dimensiones (ancho × alto), no del peso
 // del archivo: por eso la calidad JPEG se sube sin pagar nada más, y es lo que
@@ -3891,10 +3977,15 @@ Responde SOLO con JSON exacto, sin texto ni markdown:
   "estado_general": "Excelente"|"Bueno"|"Aceptable"|"Preocupante"|"Crítico",
   "distribucion_severidad": {"saludable": N, "leve": N, "moderado": N, "severo": N},
   "problemas_detectados": ["problema 1", "problema 2"],
+  "problemas_codigos": ["codigo1", "codigo2"],
   "recomendacion_urgente": "acción prioritaria",
   "recomendaciones_detalladas": ["rec 1", "rec 2", "rec 3"],
   "resumen_por_punto": [{"punto": N, "diagnostico": "texto breve", "severidad": "saludable|leve|moderado|severo"}]
-}` });
+}
+
+"problemas_codigos" es OBLIGATORIO y solo puede contener códigos de esta lista exacta (sin inventar, sin variantes):
+${_catalogoParaPrompt()}
+Usa "otro" solo si de verdad no encaja en ninguno, y "sano" si no hay problemas. Los códigos deben corresponder a lo mismo que describes en "problemas_detectados"; ese campo sigue siendo texto libre para el matiz.` });
 
     try {
         const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -4595,6 +4686,29 @@ function _selfTestCalculos() {
     check('audit.mismoLugar', audQuieto.alertas.filter(a=>a.msg.includes('mismo lugar')).length, 1);
     check('audit.sinDatos',   auditarMuestreo({ puntos: [] }).sinDatos ? 1 : 0, 1);
 
+    // Vocabulario cerrado: distintas redacciones deben caer en el MISMO código
+    check('vocab.trips1',    codigoProblema('Trips en hoja joven') === 'trips' ? 1:0, 1);
+    check('vocab.trips2',    codigoProblema('daño por TRIPS en brotes') === 'trips' ? 1:0, 1);
+    check('vocab.trips3',    codigoProblema('thrips') === 'trips' ? 1:0, 1);
+    check('vocab.tildes',    codigoProblema('Roña del fruto') === 'rona' ? 1:0, 1);   // con tilde y ñ
+    check('vocab.sinTildes', codigoProblema('rona') === 'rona' ? 1:0, 1);
+    check('vocab.zinc',      codigoProblema('Deficiencia de Zinc') === 'def_zinc' ? 1:0, 1);
+    check('vocab.antrac',    codigoProblema('Colletotrichum sp.') === 'antracnosis' ? 1:0, 1);
+    check('vocab.sano',      codigoProblema('Cultivo saludable') === 'sano' ? 1:0, 1);
+    check('vocab.otro',      codigoProblema('algo rarísimo no catalogado') === 'otro' ? 1:0, 1);
+    check('vocab.vacio',     codigoProblema('') === null ? 1:0, 1);
+    check('vocab.nombre',    nombreProblema('def_zinc') === 'Deficiencia de zinc' ? 1:0, 1);
+    check('vocab.tipo',      tipoProblema('antracnosis') === 'enfermedad' ? 1:0, 1);
+    check('vocab.codsUnicos', new Set(PROBLEMAS_AGUACATE.map(p=>p.cod)).size, PROBLEMAS_AGUACATE.length);
+
+    // Muestreo: prefiere los códigos guardados; si no hay, los deriva del texto libre (registros viejos)
+    const mNuevo = { reporte: { problemas_codigos:['trips','def_zinc'], problema_mas_frecuente:'Trips' } };
+    const mViejo = { reporte: { problema_mas_frecuente:'Trips en hoja joven', problemas_detectados:['Antracnosis','Deficiencia de zinc'] } };
+    check('vocab.musNuevo', problemasDeMuestreo(mNuevo).sort().join(',') === 'def_zinc,trips' ? 1:0, 1);
+    check('vocab.musViejo', problemasDeMuestreo(mViejo).sort().join(',') === 'antracnosis,def_zinc,trips' ? 1:0, 1);
+    check('vocab.obsGuardado', problemaDeObservacion({ problemaCodigo:'acaros' }) === 'acaros' ? 1:0, 1);
+    check('vocab.obsDerivado', problemaDeObservacion({ plantixDiagnostico:'Ácaros en el envés' }) === 'acaros' ? 1:0, 1);
+
     const rp = rechazoPorParcela({ poscosecha:_pos, entregas:_ent });
     check('rechazo.parcelas',   rp.filas.length, 2);                 // solo las de guía pura
     check('rechazo.mixtas',     rp.mixtas.length, 1);                // la mezclada NO se reparte
@@ -5009,6 +5123,35 @@ function migrarIteranzaAPoscosecha() {
 
     localStorage.setItem('hda_migr_poscosecha', 'done');
     console.log(`[migración] ${viejos.length} registro(s) Iteranza movidos a poscosecha.`);
+}
+
+// ── MIGRACIÓN: histórico satelital de localStorage → Firebase ──
+// Antes vivía en `hda_indice_historial`, con tope de 90 registros TOTALES (con 10
+// parcelas ≈ 9 fechas) y sin sincronizar entre dispositivos. Se sube lo que haya
+// para no perder la historia acumulada; el localStorage se conserva por si acaso.
+function migrarIndicesAFirebase() {
+    if (localStorage.getItem('hda_migr_indices') === 'done') return;
+    let viejos = [];
+    try { viejos = JSON.parse(localStorage.getItem('hda_indice_historial') || '[]'); } catch(e) {}
+    if (!Array.isArray(viejos) || !viejos.length) { localStorage.setItem('hda_migr_indices', 'done'); return; }
+
+    // Clave parcela+fecha para no duplicar si la migración corre en dos dispositivos
+    const yaHay = new Set(DB.get('indices').map(h => `${h.parcelaId}|${h.fecha}`));
+    let n = 0;
+    viejos.forEach(h => {
+        if (!h || !h.fecha) return;
+        const clave = `${h.parcelaId}|${h.fecha}`;
+        if (yaHay.has(clave)) return;
+        yaHay.add(clave);
+        DB.add('indices', {
+            fecha: h.fecha, parcelaId: h.parcelaId, parcelaNombre: h.parcelaNombre || '',
+            ndvi: h.ndvi ?? null, ndre: h.ndre ?? null, evi: h.evi ?? null, ndmi: h.ndmi ?? null,
+            imageDate: h.imageDate || null, _origen: 'localStorage'
+        });
+        n++;
+    });
+    localStorage.setItem('hda_migr_indices', 'done');
+    if (n) console.log(`[migración] ${n} snapshot(s) satelitales movidos a Firebase.`);
 }
 
 // ── MIGRACIÓN: generar lote de hacienda para cosechas viejas sin lote ──
@@ -6866,30 +7009,26 @@ async function actualizarIndices() {
         }
     }
 
-    // Guardar snapshot histórico para análisis de tendencias
+    // Snapshot histórico en Firebase (antes: localStorage con tope de 90 registros TOTALES,
+    // que con 10 parcelas daba ~9 fechas de historia, sin sincronizar entre dispositivos).
     const fechaHoy = new Date().toISOString().split('T')[0];
-    const historial = JSON.parse(localStorage.getItem('hda_indice_historial') || '[]');
+    const yaGuardado = DB.get('indices');
     for (const p of parcelas) {
         const pd = cache[p.id];
         if (!pd) continue;
-        // Evitar duplicar si ya hay entrada del mismo día
-        const yaExiste = historial.find(h => h.parcelaId === p.id && h.fecha === fechaHoy);
-        if (!yaExiste) {
-            historial.push({
-                fecha: fechaHoy,
-                parcelaId: p.id,
-                parcelaNombre: p.nombre,
-                ndvi: idxVal(pd.ndvi),
-                ndre: idxVal(pd.ndre),
-                evi:  idxVal(pd.evi),
-                ndmi: idxVal(pd.ndmi),
-                imageDate: idxDate(pd.ndvi)
-            });
-        }
+        // Evitar duplicar si ya hay entrada de esta parcela en el mismo día
+        if (yaGuardado.some(h => String(h.parcelaId) === String(p.id) && h.fecha === fechaHoy)) continue;
+        DB.add('indices', {
+            fecha: fechaHoy,
+            parcelaId: p.id,
+            parcelaNombre: p.nombre,
+            ndvi: idxVal(pd.ndvi),
+            ndre: idxVal(pd.ndre),
+            evi:  idxVal(pd.evi),
+            ndmi: idxVal(pd.ndmi),
+            imageDate: idxDate(pd.ndvi)
+        });
     }
-    // Mantener máximo 90 entradas (limitar localStorage)
-    const histLimitado = historial.slice(-90);
-    localStorage.setItem('hda_indice_historial', JSON.stringify(histLimitado));
 
     // Recalcular semáforo predictivo
     calcularAlertasPredictivas();
@@ -7443,9 +7582,13 @@ function renderObservaciones() {
     renderSemaforoResumen();
 }
 
+// Código de problema que devolvió la IA para la foto actual (se limpia al cambiar de foto)
+let _obsProblemaCod = null;
+
 function obsCargarFoto(e) {
     const file = e.target.files[0];
     if (!file) return;
+    _obsProblemaCod = null;   // foto nueva: el diagnóstico anterior ya no aplica
 
     const preview = document.getElementById('obs-foto-preview');
     const status  = document.getElementById('obs-gps-status');
@@ -7514,11 +7657,16 @@ Responde SOLO con el siguiente JSON, sin texto adicional ni markdown:
 
 {
   "diagnostico": "nombre de la enfermedad, plaga o condición identificada (o 'Cultivo saludable' si no hay problema visible)",
+  "problema_codigo": "codigo de la lista",
   "severidad": "leve" o "moderado" o "severo" o "saludable",
   "descripcion": "descripción detallada de los síntomas observados y estado general del árbol en 2-3 oraciones",
   "causas_posibles": ["causa 1", "causa 2"],
   "recomendaciones": ["acción 1", "acción 2", "acción 3"]
-}`;
+}
+
+"problema_codigo" es OBLIGATORIO y debe ser UNO de esta lista exacta, sin inventar ni usar variantes:
+${_catalogoParaPrompt()}
+Usa "sano" si el cultivo está saludable y "otro" solo si de verdad no encaja en ninguno. El campo "diagnostico" sigue en texto libre para el detalle.`;
 
     try {
         const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -7548,6 +7696,11 @@ Responde SOLO con el siguiente JSON, sin texto adicional ni markdown:
         const data = await res.json();
         const text = _textoRespuestaIA(data);
         const result = JSON.parse(text.replace(/```json?|```/g, '').trim());
+
+        // Código del catálogo: si la IA devuelve uno inválido, se deriva del texto
+        const codIA = String(result.problema_codigo || '').trim();
+        _obsProblemaCod = PROBLEMAS_AGUACATE.some(p => p.cod === codIA)
+            ? codIA : codigoProblema(result.diagnostico);
 
         document.getElementById('obs-plantix').value = result.diagnostico || '';
 
@@ -7603,7 +7756,11 @@ async function guardarObservacion() {
         lng: document.getElementById('obs-lng').value || null,
         foto: fotoGuardar,
         plantixDiagnostico: document.getElementById('obs-plantix').value.trim() || null,
-        severidad: document.getElementById('obs-severidad').value || null
+        severidad: document.getElementById('obs-severidad').value || null,
+        // Código del catálogo: el que dio la IA o, si no hay, derivado del texto.
+        // Es lo que permite comparar entre parcelas y en el tiempo.
+        problemaCodigo: _obsProblemaCod
+            || codigoProblema(document.getElementById('obs-plantix').value || descripcion)
     };
 
     DB.add('observaciones', obs);
@@ -7669,7 +7826,7 @@ function eliminarObservacion(id) {
 
 function calcularAlertasPredictivas() {
     const cache    = JSON.parse(localStorage.getItem('hda_indices_cache') || 'null');
-    const historial = JSON.parse(localStorage.getItem('hda_indice_historial') || '[]');
+    const historial = DB.get('indices');          // ahora en Firebase, sin tope de 90
     const parcelas = DB.get('parcelas');
     const observaciones = DB.get('observaciones');
     const semaforo = {};
@@ -7851,9 +8008,9 @@ function renderHistorial() {
 
     // 2. Historial de índices satelitales
     if (!filtroTipo || filtroTipo === 'satelital') {
-        const hist = JSON.parse(localStorage.getItem('hda_indice_historial') || '[]');
+        const hist = DB.get('indices');
         hist.forEach(h => {
-            if (filtroParcelaId && h.parcelaId !== filtroParcelaId) return;
+            if (filtroParcelaId && String(h.parcelaId) !== String(filtroParcelaId)) return;
             const vals = ['ndvi','ndre','evi','ndmi']
                 .filter(k => h[k] != null)
                 .map(k => `${k.toUpperCase()}: ${h[k].toFixed(3)}`).join(' · ');
@@ -9287,7 +9444,7 @@ function entrarConRol() {
     aplicarRol(_rolActual);
     loadApiKey();
     renderFacturasHistory();
-    initFirestore().then(() => { migrarIteranzaAPoscosecha(); migrarLotesCosecha(); render(); });
+    initFirestore().then(() => { migrarIteranzaAPoscosecha(); migrarLotesCosecha(); migrarIndicesAFirebase(); render(); });
 }
 
 function esAdmin() { return _rolActual === 'admin'; }
@@ -9697,7 +9854,8 @@ async function enviarAnalisisCampo() {
         content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: p.foto.split(',')[1] } });
         content.push({ type: 'text', text: 'Foto del Punto ' + p.idx });
     });
-    content.push({ type: 'text', text: `Eres un agronomo experto en aguacate. Se te presentan ${fotos.length} fotos de puntos de muestreo de la parcela "${m.parcelaNombre}". Analiza todas en conjunto. Responde SOLO con JSON exacto sin texto ni markdown: {"porcentaje_arboles_con_problema":numero,"problema_mas_frecuente":"texto","severidad_promedio":"saludable|leve|moderado|severo","estado_general":"Excelente|Bueno|Aceptable|Preocupante|Critico","distribucion_severidad":{"saludable":N,"leve":N,"moderado":N,"severo":N},"recomendacion_urgente":"texto","recomendaciones_detalladas":["r1","r2","r3"]}` });
+    content.push({ type: 'text', text: `Eres un agronomo experto en aguacate. Se te presentan ${fotos.length} fotos de puntos de muestreo de la parcela "${m.parcelaNombre}". Analiza todas en conjunto. Responde SOLO con JSON exacto sin texto ni markdown: {"porcentaje_arboles_con_problema":numero,"problema_mas_frecuente":"texto","severidad_promedio":"saludable|leve|moderado|severo","estado_general":"Excelente|Bueno|Aceptable|Preocupante|Critico","distribucion_severidad":{"saludable":N,"leve":N,"moderado":N,"severo":N},"problemas_codigos":["codigo1"],"recomendacion_urgente":"texto","recomendaciones_detalladas":["r1","r2","r3"]}
+"problemas_codigos" es OBLIGATORIO y solo admite códigos de esta lista exacta: ${_catalogoParaPrompt()}. Usa "sano" si no hay problemas y "otro" solo si no encaja en ninguno.` });
     try {
         const res = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
