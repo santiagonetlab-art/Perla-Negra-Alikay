@@ -873,7 +873,7 @@
              sufijos distintos: "v2.4-D" y "v2.4-E" se leen igual de un vistazo y
              hacen imposible saber qué versión está corriendo. La fecha es informativa,
              NO identifica la versión. -->
-        <span>v2.8 · 2026-08-09</span>
+        <span>v2.9 · 2026-08-09</span>
         <!-- Herramientas de datos: solo admin (destructivas) -->
         <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
             <div style="display:flex;gap:4px">
@@ -1947,6 +1947,12 @@
     <div id="page-historial" class="page">
         <div class="page-header">
             <h2>📋 Historial por Parcela</h2>
+            <div class="header-actions">
+                <button class="btn btn-primary btn-sm" onclick="exportarParaIA()"
+                        title="Descarga observaciones y muestreos en JSON, con su propio manual de lectura, para analizarlos con cualquier IA">
+                    🤖 Exportar para análisis IA
+                </button>
+            </div>
         </div>
         <div style="margin-bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <select id="hist-parcela-sel" onchange="renderHistorial()" style="padding:8px 12px;border-radius:8px;border:1px solid #ddd;font-size:14px;min-width:200px">
@@ -8538,6 +8544,198 @@ function importarIteranza2026() {
     nuevas.forEach(e => DB.add('poscosecha', e));
     renderPoscosecha();
     alert(`✅ ${nuevas.length} informe(s) importados correctamente.\n\nTotal facturado: ${fmt.money(nuevas.reduce((s,e) => s + e.valorFacturado, 0))}\nPuedes verlos en la tabla de Pos-cosecha.`);
+}
+
+// ═══════════════════════════════════════════════════════════
+// EXPORTACIÓN PARA ANÁLISIS CON IA
+// ═══════════════════════════════════════════════════════════
+// El archivo se explica a sí mismo: lleva su propio manual de lectura para que
+// CUALQUIER modelo lo interprete bien sin que el usuario tenga que dictar el
+// contexto. Todo se DERIVA del estado real de la app (catálogo, versión, datos),
+// así que se mantiene al día solo — nada de texto fijo que envejezca.
+// NO incluye: fotos (base64, inútiles ya diagnosticadas y pesadas), trabajadores,
+// salarios ni gastos. Solo lo necesario para el análisis fitosanitario.
+function construirExportIA() {
+    const parcelas    = DB.get('parcelas');
+    const muestreos   = DB.get('muestreos');
+    const observaciones = DB.get('observaciones');
+    const tratamientos  = DB.get('tratamientos');
+    const indices     = DB.get('indices');
+    const sello       = document.querySelector('.sidebar-footer span')?.textContent.trim() || '';
+
+    // ── Muestreos: se agrega el código normalizado y la sensibilidad real ──
+    const musExport = muestreos.map(m => {
+        const r = m.reporte || {};
+        const n = parseInt(m.puntosAnalizados) || 0;
+        const aud = auditarMuestreo(m);
+        return {
+            fecha: m.fechaISO || m.fecha || null,
+            parcela: m.parcelaNombre || null,
+            puntos_analizados: n,
+            puntos_totales: parseInt(m.totalPuntos) || null,
+            // Cuánto mueve UNA sola foto el porcentaje: clave para no leer ruido como tendencia
+            un_punto_equivale_a_pct: n > 0 ? +(100 / n).toFixed(1) : null,
+            porcentaje_con_problema: r.porcentaje_arboles_con_problema ?? null,
+            estado_general: r.estado_general || null,
+            severidad_promedio: r.severidad_promedio || null,
+            distribucion_severidad: r.distribucion_severidad || null,
+            problemas_texto_libre: [r.problema_mas_frecuente, ...(Array.isArray(r.problemas_detectados) ? r.problemas_detectados : [])].filter(Boolean),
+            problemas_codigos: problemasDeMuestreo(m),
+            codigos_asignados_por: Array.isArray(r.problemas_codigos) && r.problemas_codigos.length ? 'ia' : 'derivado_del_texto',
+            problemas_fuera_de_catalogo: Array.isArray(r.problemas_no_catalogados) ? r.problemas_no_catalogados : [],
+            recomendacion_urgente: r.recomendacion_urgente || null,
+            verificacion_gps: aud.sinDatos ? null : {
+                fotos_verificadas_en_sitio: aud.verificados, fotos_fuera_de_rango: aud.fuera,
+                fotos_sin_gps: aud.sinGps, desviacion_media_m: aud.distProm,
+                duracion_recorrido_min: aud.duracionMin,
+                alertas: aud.alertas.map(a => a.msg)
+            }
+        };
+    }).sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)));
+
+    // ── Observaciones (sin foto) ──
+    const obsExport = observaciones.map(o => ({
+        fecha: o.fechaISO || o.fecha || null,
+        parcela: o.parcelaNombre || null,
+        severidad: o.severidad || null,
+        diagnostico_ia: o.plantixDiagnostico || null,
+        descripcion: o.descripcion || null,
+        problema_codigo: problemaDeObservacion(o),
+        codigo_asignado_por: o.problemaCodigo ? 'ia' : 'derivado_del_texto',
+        problema_fuera_de_catalogo: o.problemaNoCatalogado || null,
+        gps: (o.lat && o.lng) ? { lat: +o.lat, lng: +o.lng } : null
+    })).sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)));
+
+    // ── Tratamientos: necesarios para responder "¿funcionó?" ──
+    const traExport = tratamientos.map(t => ({
+        fecha: t.fecha || null, parcela: t.parcela || null,
+        problema_texto: t.problema || null,
+        problema_codigo: codigoProblema(t.problema),
+        producto: t.producto || null, dosis: t.dosis || null, metodo: t.metodo || null,
+        fecha_evaluacion: t.fechaEval || null,
+        resultado_declarado: t.resultado || null,
+        notas: t.notas || null
+    })).sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)));
+
+    // ── Rangos reales, para que el modelo sepa con qué tamaños trabaja ──
+    const puntos = musExport.map(m => m.puntos_analizados).filter(n => n > 0);
+    const rangoPuntos = puntos.length ? { min: Math.min(...puntos), max: Math.max(...puntos) } : null;
+    const fechas = [...musExport, ...obsExport].map(x => x.fecha).filter(Boolean).sort();
+
+    return {
+        meta: {
+            fuente: 'Mi Hacienda — Aguacates',
+            version_app: sello,
+            generado: new Date().toISOString(),
+            proposito: 'Análisis fitosanitario de observaciones y muestreos. Archivo autoexplicativo: la sección "contexto" contiene todo lo necesario para interpretarlo correctamente.',
+            contenido: { muestreos: musExport.length, observaciones: obsExport.length,
+                         tratamientos: traExport.length, parcelas: parcelas.length,
+                         snapshots_satelitales: indices.length },
+            periodo_cubierto: fechas.length ? { desde: fechas[0], hasta: fechas[fechas.length-1] } : null,
+            excluido_a_proposito: ['fotos (ya diagnosticadas, pesan mucho)', 'trabajadores y salarios', 'gastos y finanzas']
+        },
+
+        // ── El manual de lectura, generado desde el estado real de la app ──
+        contexto: {
+            que_es_cada_cosa: {
+                muestreo: 'Recorrido sistemático de una parcela fotografiando puntos predefinidos (5 por hectárea). Una IA analiza las fotos en conjunto y emite un diagnóstico. Es un MUESTREO, no un censo.',
+                observacion: 'Registro puntual y NO sistemático: alguien vio algo y lo fotografió. Útil como señal de alerta, pero NO es representativo de la parcela.',
+                tratamiento: 'Aplicación fitosanitaria o nutricional. El campo "resultado_declarado" es una apreciación MANUAL Y SUBJETIVA de quien lo registró, no una medición.',
+                indice_satelital: 'NDVI/NDRE/EVI/NDMI por parcela vía Sentinel. Señal de vigor general, no diagnóstico de plaga.'
+            },
+            advertencias_metodologicas: [
+                rangoPuntos
+                    ? `TAMAÑO DE MUESTRA: los muestreos tienen entre ${rangoPuntos.min} y ${rangoPuntos.max} puntos analizados. Cada muestreo trae "un_punto_equivale_a_pct": UNA sola foto mueve el porcentaje esa cantidad. NO interpretes como tendencia un cambio menor a 2 o 3 veces ese valor.`
+                    : 'TAMAÑO DE MUESTRA: no hay muestreos con puntos analizados en este archivo.',
+                'NO son comparables entre sí observaciones y muestreos: las observaciones son oportunistas (sesgo de detección: se registra lo que llama la atención), los muestreos son sistemáticos.',
+                'Los registros con "codigos_asignados_por":"derivado_del_texto" son ANTERIORES al vocabulario controlado: su código se infirió por palabras clave del texto libre y puede estar incompleto. Los "ia" fueron clasificados directamente por el modelo.',
+                'Revisa "problemas_fuera_de_catalogo": son diagnósticos reales que NO entran en las comparaciones por código. Si son frecuentes, cualquier conteo por código subestima la realidad.',
+                'La ausencia de registros en una parcela NO significa que esté sana: puede significar que no se muestreó. Contrasta siempre contra la frecuencia de muestreo por parcela.',
+                'Al analizar el efecto de un tratamiento, compara el muestreo ANTERIOR y el POSTERIOR de la MISMA parcela, y ten en cuenta el tamaño de muestra antes de afirmar que funcionó.'
+            ],
+            catalogo_problemas: PROBLEMAS_AGUACATE.map(p => ({ codigo: p.cod, nombre: p.nombre, tipo: p.tipo })),
+            nota_catalogo: 'Vocabulario cerrado: la IA debe clasificar contra esta lista. "otro" significa que no encajaba; el nombre real va en "problemas_fuera_de_catalogo".',
+            escalas: {
+                severidad: ['saludable','leve','moderado','severo'],
+                estado_general: ['Excelente','Bueno','Aceptable','Preocupante','Crítico']
+            },
+            verificacion_gps: 'Desde 2026-08 se registra dónde y cuándo se tomó cada foto del muestreo, y se compara con el punto asignado. "fotos_fuera_de_rango" > 0 o alertas presentes = ese muestreo puede no ser representativo del recorrido previsto. Los muestreos anteriores no tienen este dato (verificacion_gps: null).',
+            preguntas_utiles: [
+                '¿Qué problemas aparecen en más de una parcela y en qué orden temporal? (posible propagación entre lotes)',
+                '¿Hay parcelas con muestreo escaso o nulo? (puntos ciegos, no necesariamente sanas)',
+                '¿Después de cada tratamiento, bajó el problema en el siguiente muestreo de esa parcela?',
+                '¿Coincide alguna caída de NDVI con la aparición de un problema en la misma parcela?',
+                '¿Qué diagnósticos fuera de catálogo se repiten? (deberían incorporarse al vocabulario)'
+            ]
+        },
+
+        datos: {
+            parcelas: parcelas.map(p => ({
+                nombre: p.nombre, hectareas: p.ha ?? null, arboles: p.arboles ?? null,
+                variedad: p.variedad || null, estado: p.estado || null,
+                tiene_poligono: !!(p.poligono && p.poligono.length)
+            })),
+            muestreos: musExport,
+            observaciones: obsExport,
+            tratamientos: traExport,
+            indices_satelitales: indices.map(h => ({
+                fecha: h.fecha, parcela: h.parcelaNombre || null,
+                ndvi: h.ndvi ?? null, ndre: h.ndre ?? null, evi: h.evi ?? null, ndmi: h.ndmi ?? null
+            })).sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)))
+        },
+
+        // Calculado aquí para que el modelo no tenga que normalizar nada
+        resumen_precalculado: {
+            problemas_por_codigo: (() => {
+                const acum = {};
+                muestreos.forEach(m => problemasDeMuestreo(m).forEach(c => {
+                    (acum[c] = acum[c] || { registros:0, parcelas:new Set(), fuente:{muestreo:0,observacion:0} });
+                    acum[c].registros++; acum[c].fuente.muestreo++;
+                    if (m.parcelaNombre) acum[c].parcelas.add(m.parcelaNombre);
+                }));
+                observaciones.forEach(o => {
+                    const c = problemaDeObservacion(o); if (!c) return;
+                    (acum[c] = acum[c] || { registros:0, parcelas:new Set(), fuente:{muestreo:0,observacion:0} });
+                    acum[c].registros++; acum[c].fuente.observacion++;
+                    if (o.parcelaNombre) acum[c].parcelas.add(o.parcelaNombre);
+                });
+                return Object.entries(acum).map(([cod, d]) => ({
+                    codigo: cod, nombre: nombreProblema(cod), tipo: tipoProblema(cod),
+                    registros: d.registros, en_muestreos: d.fuente.muestreo, en_observaciones: d.fuente.observacion,
+                    parcelas: [...d.parcelas]
+                })).sort((a,b) => b.registros - a.registros);
+            })(),
+            diagnosticos_fuera_de_catalogo: diagnosticosSinClasificar(),
+            cobertura_por_parcela: parcelas.map(p => ({
+                parcela: p.nombre,
+                muestreos: muestreos.filter(m => m.parcelaNombre === p.nombre).length,
+                observaciones: observaciones.filter(o => o.parcelaNombre === p.nombre).length,
+                ultimo_muestreo: muestreos.filter(m => m.parcelaNombre === p.nombre)
+                    .map(m => m.fechaISO || '').sort().pop() || null
+            })).sort((a,b) => a.muestreos - b.muestreos)
+        }
+    };
+}
+
+function exportarParaIA() {
+    const ex = construirExportIA();
+    const { muestreos, observaciones } = ex.meta.contenido;
+    if (!muestreos && !observaciones)
+        return alert('Todavía no hay muestreos ni observaciones para exportar.');
+
+    const nombre = `hacienda-analisis-ia-${new Date().toISOString().slice(0,10)}.json`;
+    const blob = new Blob([JSON.stringify(ex, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = nombre; a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 2000);
+
+    const kb = Math.round(blob.size / 1024);
+    alert(`Archivo listo: ${nombre}  (${kb} KB)\n\n` +
+          `${muestreos} muestreo(s) · ${observaciones} observación(es) · ${ex.meta.contenido.tratamientos} tratamiento(s)\n\n` +
+          `Incluye su propio manual de lectura: puedes dárselo a cualquier IA y pedirle el análisis directamente.\n` +
+          `No contiene fotos, ni datos de trabajadores, ni finanzas.`);
 }
 
 function exportarBackup() {
