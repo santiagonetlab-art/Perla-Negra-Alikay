@@ -876,7 +876,7 @@
              sufijos distintos: "v2.4-D" y "v2.4-E" se leen igual de un vistazo y
              hacen imposible saber qué versión está corriendo. La fecha es informativa,
              NO identifica la versión. -->
-        <span>v3.2 · 2026-08-10<span id="estado-conexion-pie"></span></span>
+        <span>v3.3 · 2026-08-10<span id="estado-conexion-pie"></span></span>
         <!-- Herramientas de datos: solo admin (destructivas) -->
         <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
             <div style="display:flex;gap:4px">
@@ -8294,6 +8294,7 @@ function _parcelaMasCercana(lat, lng) {
 }
 
 // Asignar la parcela a mano desde la tarjeta de integridad
+let _avisoAsignacion = null;   // confirmación visible; se borra sola
 function asignarParcelaObservacion(obsId, parcelaId) {
     if (!parcelaId) return;
     const p = parcelaPorId(parcelaId);
@@ -8301,6 +8302,13 @@ function asignarParcelaObservacion(obsId, parcelaId) {
     DB.update('observaciones', obsId, {
         parcelaId: p.id, parcelaNombre: p.nombre, _parcelaAsignadaManual: true
     });
+    _avisoAsignacion = `✓ Observación asignada a ${p.nombre}`;
+    clearTimeout(asignarParcelaObservacion._t);
+    asignarParcelaObservacion._t = setTimeout(() => {
+        _avisoAsignacion = null;
+        const p2 = document.getElementById('page-historial');
+        if (p2?.classList.contains('active')) renderHistorial();
+    }, 4000);
     renderHistorial();
     renderObservaciones();
 }
@@ -8310,7 +8318,10 @@ function _renderReferenciasRotas() {
     const box = document.getElementById('hist-referencias-rotas');
     if (!box) return;
     const r = referenciasRotas();
-    if (!r.total) { box.innerHTML = ''; return; }
+    const aviso = _avisoAsignacion
+        ? `<div style="background:#e8f5e9;border:1px solid #b7dfca;border-radius:8px;padding:9px 12px;
+                       margin-bottom:12px;font-size:.86rem;color:#2d6a4f">${_avisoAsignacion}</div>` : '';
+    if (!r.total) { box.innerHTML = aviso; return; }   // el aviso sigue visible aunque ya no queden rotas
     const parcelas = DB.get('parcelas');
     const fila = (txt, n) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-top:1px solid #f0f0f0;font-size:.85rem">
         <span>${txt}</span><strong>${n}</strong></div>`;
@@ -8324,18 +8335,25 @@ function _renderReferenciasRotas() {
             ? `más cercana: <strong>${cerca.parcela.nombre}</strong> (a ${cerca.metros} m)`
             : '<span style="color:#e07b2a">sin GPS</span>';
         const dx = o.plantixDiagnostico || (o.descripcion || '').slice(0, 40) || 'observación';
+        // NADA preseleccionado: si la sugerencia venía marcada y el usuario la
+        // "elegía", el valor no cambiaba, el evento no se disparaba y la asignación
+        // NO ocurría — parecía asignada pero el registro seguía roto.
         return `<div style="padding:8px 0;border-top:1px solid #f0f0f0">
             <div style="font-size:.84rem;margin-bottom:4px">
                 <strong>${o.fecha || o.fechaISO || ''}</strong> · ${dx} <span style="color:var(--muted)">· ${pista}</span>
             </div>
-            <select onchange="asignarParcelaObservacion(${o.id}, this.value)" style="width:100%;padding:6px 8px;font-size:.85rem">
-                <option value="">— Asignar parcela —</option>
-                ${parcelas.map(p => `<option value="${p.id}" ${cerca && mismoId(cerca.parcela.id, p.id) ? 'selected' : ''}>${p.nombre}</option>`).join('')}
-            </select>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <select onchange="asignarParcelaObservacion('${o.id}', this.value)" style="flex:1;min-width:150px;padding:6px 8px;font-size:.85rem">
+                    <option value="">— Asignar parcela —</option>
+                    ${parcelas.map(p => `<option value="${p.id}">${p.nombre}</option>`).join('')}
+                </select>
+                ${cerca ? `<button class="btn btn-outline btn-sm" style="flex-shrink:0"
+                    onclick="asignarParcelaObservacion('${o.id}', '${cerca.parcela.id}')">✓ ${cerca.parcela.nombre}</button>` : ''}
+            </div>
         </div>`;
     };
 
-    box.innerHTML = `<div class="card" style="margin-bottom:16px;padding:14px 16px;border-left:4px solid #c62828">
+    box.innerHTML = aviso + `<div class="card" style="margin-bottom:16px;padding:14px 16px;border-left:4px solid #c62828">
         <div style="font-weight:700;font-size:.95rem;margin-bottom:4px">⚠️ ${r.total} registro${r.total!==1?'s':''} con la parcela desconectada</div>
         <div style="font-size:.82rem;color:var(--muted);margin-bottom:8px">
             Estos registros no se pueden atribuir a ninguna parcela, así que <strong>quedan fuera de rentabilidad y de las comparaciones</strong>.
@@ -8387,17 +8405,22 @@ function _renderSinClasificar() {
 function renderHistorial() {
     const parcelas = DB.get('parcelas');
 
-    // Poblar selector
+    // Repoblar SIEMPRE, conservando la selección. Antes se llenaba una sola vez
+    // ("if options.length <= 1") y quedaba congelado: al renombrar o agregar una
+    // parcela, el filtro seguía ofreciendo la lista vieja hasta recargar la app.
     const selP = document.getElementById('hist-parcela-sel');
-    if (selP && selP.options.length <= 1) {
-        parcelas.forEach(p => {
-            const o = document.createElement('option');
-            o.value = p.id; o.textContent = p.nombre;
-            selP.appendChild(o);
-        });
+    let parcelaFiltroPerdida = null;
+    if (selP) {
+        const previo = selP.value;
+        selP.innerHTML = '<option value="">— Todas las parcelas —</option>' +
+            parcelas.map(p => `<option value="${p.id}">${p.nombre}</option>`).join('');
+        if (previo) {
+            if (parcelaPorId(previo)) selP.value = previo;
+            else parcelaFiltroPerdida = true;   // la parcela filtrada ya no existe → vuelve a "Todas"
+        }
     }
 
-    const filtroParcelaId = document.getElementById('hist-parcela-sel')?.value || null;
+    const filtroParcelaId = selP?.value || null;
     const filtroTipo      = document.getElementById('hist-tipo-sel')?.value || '';
     const cont = document.getElementById('historial-container');
     if (!cont) return;
@@ -8417,7 +8440,10 @@ function renderHistorial() {
                 fecha: o.fechaISO || o.fecha,
                 fechaLabel: o.fecha,
                 parcelaId: o.parcelaId,
-                parcelaNombre: o.parcelaNombre || parcelas.find(p=>p.id===o.parcelaId)?.nombre || '—',
+                // Derivado del ID, NO el nombre guardado: si renombras una parcela, el
+                // nombre congelado en el registro hace parecer que el filtro trae eventos
+                // de otras parcelas cuando en realidad acertó.
+                parcelaNombre: nombreParcela(o.parcelaId, o.parcelaNombre) || '—',
                 titulo: o.plantixDiagnostico ? `🤖 ${o.plantixDiagnostico}` : '🌿 Observación de campo',
                 detalle: o.descripcion,
                 badge: o.severidad,
@@ -8492,15 +8518,22 @@ function renderHistorial() {
     // Ordenar por fecha descendente
     eventos.sort((a, b) => b.fecha.localeCompare(a.fecha));
 
+    // Si la parcela que estaba filtrada ya no existe, se avisa en vez de fallar callado
+    const avisoFiltro = parcelaFiltroPerdida
+        ? `<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:9px 12px;
+                       margin-bottom:12px;font-size:.85rem;color:#8a6d1a">
+             La parcela que tenías filtrada ya no existe (renombrada o eliminada). Se volvió a <strong>Todas las parcelas</strong>.
+           </div>` : '';
+
     if (!eventos.length) {
-        cont.innerHTML = '<div class="empty-state"><div class="e-icon">📋</div><p>Sin eventos para los filtros seleccionados.</p></div>';
+        cont.innerHTML = avisoFiltro + '<div class="empty-state"><div class="e-icon">📋</div><p>Sin eventos para los filtros seleccionados.</p></div>';
         return;
     }
 
     const TIPO_COLOR = { observacion:'#7b1fa2', satelital:'#1565c0', insumo:'#2d6a4f', tratamiento:'#c2185b' };
     const TIPO_BG    = { observacion:'#f3e5f5', satelital:'#e3f2fd', insumo:'#e8f5e9', tratamiento:'#fce4ec' };
 
-    cont.innerHTML = `<div style="position:relative;padding-left:24px">
+    cont.innerHTML = avisoFiltro + `<div style="position:relative;padding-left:24px">
         <div style="position:absolute;left:9px;top:0;bottom:0;width:2px;background:#e0e0e0"></div>
         ${eventos.map(ev => `
         <div style="position:relative;margin-bottom:14px">
@@ -9743,14 +9776,14 @@ function eliminarJornada(id) {
 function renderTratamientos() {
     const parcelas = DB.get('parcelas');
 
-    // Poblar filtro de parcelas (solo una vez)
+    // Repoblar SIEMPRE conservando la selección (antes se llenaba una sola vez y
+    // quedaba congelado al renombrar o agregar parcelas — mismo fallo que en Historial)
     const selFiltro = document.getElementById('trat-filtro-parcela');
-    if (selFiltro && selFiltro.options.length <= 1) {
-        parcelas.forEach(p => {
-            const o = document.createElement('option');
-            o.value = p.nombre; o.textContent = p.nombre;
-            selFiltro.appendChild(o);
-        });
+    if (selFiltro) {
+        const previo = selFiltro.value;
+        selFiltro.innerHTML = '<option value="">Todas las parcelas</option>' +
+            parcelas.map(p => `<option value="${p.nombre}">${p.nombre}</option>`).join('');
+        if (previo && parcelas.some(p => p.nombre === previo)) selFiltro.value = previo;
     }
 
     // Poblar select del modal
