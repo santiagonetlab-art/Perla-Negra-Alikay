@@ -876,7 +876,7 @@
              sufijos distintos: "v2.4-D" y "v2.4-E" se leen igual de un vistazo y
              hacen imposible saber qué versión está corriendo. La fecha es informativa,
              NO identifica la versión. -->
-        <span>v3.3 · 2026-08-10<span id="estado-conexion-pie"></span></span>
+        <span>v3.4 · 2026-08-12<span id="estado-conexion-pie"></span></span>
         <!-- Herramientas de datos: solo admin (destructivas) -->
         <div id="footer-admin-tools" style="display:flex;flex-direction:column;gap:6px">
             <div style="display:flex;gap:4px">
@@ -4964,6 +4964,28 @@ function _selfTestCalculos() {
     check('sinClas.excluyeOk',   sinClas.some(d => /trips/i.test(d.nombre)) ? 1:0, 0);
     check('sinClas.vacio',       diagnosticosSinClasificar({ muestreos:[], observaciones:[] }).length, 0);
 
+    // Export IA: calidad de índices satelitales (nube, duplicados) y árbol individual
+    check('sat.nubeNegativo', _snapshotSospechoso({ ndvi:-0.24, evi:0.9 }) ? 1:0, 1);
+    check('sat.nubeBajo',     _snapshotSospechoso({ ndvi:0.12, evi:0.5 }) ? 1:0, 1);
+    check('sat.saturado',     _snapshotSospechoso({ ndvi:1.0, evi:0.4 }) ? 1:0, 1);
+    check('sat.eviAnomalo',   _snapshotSospechoso({ ndvi:0.6, evi:-1.9 }) ? 1:0, 1);
+    check('sat.sano',         _snapshotSospechoso({ ndvi:0.75, evi:0.55 }) ? 1:0, 0);
+    // Colapso de duplicados: misma parcela+imageDate = una sola; imagen distinta = se conserva
+    const _idx = [
+        { parcelaId:1, fecha:'2026-06-22', imageDate:'2026-06-20', ndvi:0.7 },
+        { parcelaId:1, fecha:'2026-06-23', imageDate:'2026-06-20', ndvi:0.7 },   // dup (misma imagen)
+        { parcelaId:1, fecha:'2026-06-24', imageDate:'2026-06-20', ndvi:0.7 },   // dup
+        { parcelaId:1, fecha:'2026-06-29', imageDate:'2026-06-25', ndvi:0.75 },  // imagen nueva
+        { parcelaId:2, fecha:'2026-06-22', imageDate:'2026-06-20', ndvi:0.5 }    // otra parcela
+    ];
+    check('sat.colapsa',      _colapsarIndices(_idx).length, 3);   // 5 brutos → 3 únicos
+    check('sat.colapsaSinImg', _colapsarIndices([
+        { parcelaId:1, fecha:'2026-07-06', ndvi:0.58, ndre:0.4, evi:0.5, ndmi:0.1 },
+        { parcelaId:1, fecha:'2026-07-07', ndvi:0.58, ndre:0.4, evi:0.5, ndmi:0.1 }  // mismos valores
+    ]).length, 1);
+    check('arbol.individual', _describeArbolIndividual('los árboles vecinos mantienen follaje verde') ? 1:0, 1);
+    check('arbol.parcela',    _describeArbolIndividual('toda la parcela con estrés hídrico') ? 1:0, 0);
+
     const rp = rechazoPorParcela({ poscosecha:_pos, entregas:_ent });
     check('rechazo.parcelas',   rp.filas.length, 2);                 // solo las de guía pura
     check('rechazo.mixtas',     rp.mixtas.length, 1);                // la mezclada NO se reparte
@@ -8873,6 +8895,43 @@ function importarIteranza2026() {
 // así que se mantiene al día solo — nada de texto fijo que envejezca.
 // NO incluye: fotos (base64, inútiles ya diagnosticadas y pesadas), trabajadores,
 // salarios ni gastos. Solo lo necesario para el análisis fitosanitario.
+// ── Calidad de los índices satelitales (funciones puras) ────
+// Sentinel a veces entrega imágenes con nube/sombra: dan NDVI negativo o muy bajo
+// y EVI fuera del rango físico. Sin marcarlos, CUALQUIER IA los lee como "colapso
+// vegetal". Se marcan (no se borran, para no perder trazabilidad).
+function _snapshotSospechoso(h) {
+    if (!h || h.ndvi == null) return null;
+    if (h.ndvi < 0.2)    return 'NDVI muy bajo (probable nube, sombra o suelo desnudo)';
+    if (h.ndvi >= 0.999) return 'NDVI saturado en 1.0 (valor no confiable)';
+    if (h.evi != null && (h.evi < 0 || h.evi > 1.1)) return 'EVI fuera de rango físico (imagen anómala)';
+    return null;
+}
+
+// Colapsa duplicados: cada vez que se pulsaba "Actualizar" se guardaba la última
+// imagen disponible de Sentinel (revisita ~5 días), así que la misma foto quedaba
+// repetida en días consecutivos. Dos snapshots de la misma parcela con la misma
+// fecha de imagen — o los mismos 4 valores — son LA MISMA imagen.
+function _colapsarIndices(indices) {
+    const vistos = new Set(); const out = [];
+    [...(indices||[])].sort((a,b) => String(a.fecha).localeCompare(String(b.fecha))).forEach(h => {
+        const clave = h.imageDate
+            ? `${h.parcelaId}|img:${h.imageDate}`
+            : `${h.parcelaId}|val:${h.ndvi}|${h.ndre}|${h.evi}|${h.ndmi}`;
+        if (vistos.has(clave)) return;
+        vistos.add(clave);
+        out.push(h);
+    });
+    return out;
+}
+
+// Pista heurística: la observación describe un ÁRBOL individual (vecinos sanos),
+// no un problema de toda la parcela — típico de phytophthora / muerte descendente.
+// No cambia el código del problema; es solo una señal para no sobredimensionar.
+function _describeArbolIndividual(texto) {
+    const t = (texto || '').toLowerCase();
+    return /árboles vecinos|arboles vecinos|vecinos mantienen|vecinos de la misma|un ejemplar|este ejemplar|un solo árbol|árbol aislado|problema (individual|localizado)/.test(t);
+}
+
 function construirExportIA() {
     const parcelas    = DB.get('parcelas');
     const muestreos   = DB.get('muestreos');
@@ -8921,6 +8980,8 @@ function construirExportIA() {
         problema_codigo: problemaDeObservacion(o),
         codigo_asignado_por: o.problemaCodigo ? 'ia' : 'derivado_del_texto',
         problema_fuera_de_catalogo: o.problemaNoCatalogado || null,
+        // Pista: el texto describe un árbol individual con vecinos sanos, no la parcela entera
+        posible_arbol_individual: _describeArbolIndividual(o.descripcion),
         gps: (o.lat && o.lng) ? { lat: +o.lat, lng: +o.lng } : null
     })).sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)));
 
@@ -8935,6 +8996,21 @@ function construirExportIA() {
         notas: t.notas || null
     })).sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)));
 
+    // ── Índices satelitales: colapsar duplicados y marcar los sospechosos de nube ──
+    const indicesLimpios = _colapsarIndices(indices);
+    const indicesExport = indicesLimpios.map(h => {
+        const motivo = _snapshotSospechoso(h);
+        return {
+            fecha_imagen: h.imageDate || null,     // fecha REAL de la imagen Sentinel
+            fecha_registro: h.fecha,               // cuándo se guardó el snapshot
+            parcela: nombreParcela(h.parcelaId, h.parcelaNombre),
+            ndvi: h.ndvi ?? null, ndre: h.ndre ?? null, evi: h.evi ?? null, ndmi: h.ndmi ?? null,
+            posible_nube: !!motivo,
+            motivo_descarte: motivo || null
+        };
+    }).sort((a,b) => String(a.fecha_imagen || a.fecha_registro).localeCompare(String(b.fecha_imagen || b.fecha_registro)));
+    const indicesConfiables = indicesExport.filter(h => !h.posible_nube).length;
+
     // ── Rangos reales, para que el modelo sepa con qué tamaños trabaja ──
     const puntos = musExport.map(m => m.puntos_analizados).filter(n => n > 0);
     const rangoPuntos = puntos.length ? { min: Math.min(...puntos), max: Math.max(...puntos) } : null;
@@ -8948,7 +9024,9 @@ function construirExportIA() {
             proposito: 'Análisis fitosanitario de observaciones y muestreos. Archivo autoexplicativo: la sección "contexto" contiene todo lo necesario para interpretarlo correctamente.',
             contenido: { muestreos: musExport.length, observaciones: obsExport.length,
                          tratamientos: traExport.length, parcelas: parcelas.length,
-                         snapshots_satelitales: indices.length },
+                         snapshots_satelitales_brutos: indices.length,
+                         snapshots_satelitales_unicos: indicesExport.length,
+                         snapshots_satelitales_confiables: indicesConfiables },
             periodo_cubierto: fechas.length ? { desde: fechas[0], hasta: fechas[fechas.length-1] } : null,
             excluido_a_proposito: ['fotos (ya diagnosticadas, pesan mucho)', 'trabajadores y salarios', 'gastos y finanzas']
         },
@@ -8959,9 +9037,11 @@ function construirExportIA() {
                 muestreo: 'Recorrido sistemático de una parcela fotografiando puntos predefinidos (5 por hectárea). Una IA analiza las fotos en conjunto y emite un diagnóstico. Es un MUESTREO, no un censo.',
                 observacion: 'Registro puntual y NO sistemático: alguien vio algo y lo fotografió. Útil como señal de alerta, pero NO es representativo de la parcela.',
                 tratamiento: 'Aplicación fitosanitaria o nutricional. El campo "resultado_declarado" es una apreciación MANUAL Y SUBJETIVA de quien lo registró, no una medición.',
-                indice_satelital: 'NDVI/NDRE/EVI/NDMI por parcela vía Sentinel. Señal de vigor general, no diagnóstico de plaga.'
+                indice_satelital: 'NDVI/NDRE/EVI/NDMI por parcela vía Sentinel. Señal de vigor general, no diagnóstico de plaga. Cada registro trae "fecha_imagen" (fecha real de la foto) y "posible_nube" (true = imagen con nube/sombra, ignorar).'
             },
             advertencias_metodologicas: [
+                'ÍNDICES SATELITALES — CUIDADO CON LAS NUBES: los registros con "posible_nube": true (NDVI negativo o muy bajo, EVI fuera de rango físico) son imágenes con nube o sombra, NO vegetación enferma. IGNÓRALOS: usarlos lleva a concluir falsamente que la vegetación colapsó. Ya se colapsaron los duplicados (Sentinel repite la misma imagen ~5 días); usa "fecha_imagen" para la línea de tiempo real, no "fecha_registro".',
+                'EXTENSIÓN DEL PROBLEMA: cuando una observación trae "posible_arbol_individual": true, el texto describe UN árbol afectado con vecinos sanos (típico de phytophthora / muerte descendente), no un problema de toda la parcela. No lo cuentes como si la parcela entera estuviera comprometida.',
                 rangoPuntos
                     ? `TAMAÑO DE MUESTRA: los muestreos tienen entre ${rangoPuntos.min} y ${rangoPuntos.max} puntos analizados. Cada muestreo trae "un_punto_equivale_a_pct": UNA sola foto mueve el porcentaje esa cantidad. NO interpretes como tendencia un cambio menor a 2 o 3 veces ese valor.`
                     : 'TAMAÑO DE MUESTRA: no hay muestreos con puntos analizados en este archivo.',
@@ -8982,7 +9062,7 @@ function construirExportIA() {
                 '¿Qué problemas aparecen en más de una parcela y en qué orden temporal? (posible propagación entre lotes)',
                 '¿Hay parcelas con muestreo escaso o nulo? (puntos ciegos, no necesariamente sanas)',
                 '¿Después de cada tratamiento, bajó el problema en el siguiente muestreo de esa parcela?',
-                '¿Coincide alguna caída de NDVI con la aparición de un problema en la misma parcela?',
+                '¿Coincide alguna caída de NDVI/NDMI con la aparición de un problema en la misma parcela? (usa SOLO snapshots con "posible_nube": false, ordenados por "fecha_imagen")',
                 '¿Qué diagnósticos fuera de catálogo se repiten? (deberían incorporarse al vocabulario)'
             ]
         },
@@ -8996,10 +9076,7 @@ function construirExportIA() {
             muestreos: musExport,
             observaciones: obsExport,
             tratamientos: traExport,
-            indices_satelitales: indices.map(h => ({
-                fecha: h.fecha, parcela: nombreParcela(h.parcelaId, h.parcelaNombre),
-                ndvi: h.ndvi ?? null, ndre: h.ndre ?? null, evi: h.evi ?? null, ndmi: h.ndmi ?? null
-            })).sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)))
+            indices_satelitales: indicesExport   // ya colapsados y con flag de nube
         },
 
         // Calculado aquí para que el modelo no tenga que normalizar nada
@@ -9009,13 +9086,15 @@ function construirExportIA() {
                 muestreos.forEach(m => problemasDeMuestreo(m).forEach(c => {
                     (acum[c] = acum[c] || { registros:0, parcelas:new Set(), fuente:{muestreo:0,observacion:0} });
                     acum[c].registros++; acum[c].fuente.muestreo++;
-                    if (m.parcelaNombre) acum[c].parcelas.add(m.parcelaNombre);
+                    const pn = nombreParcela(m.parcelaId, m.parcelaNombre);   // derivado del id
+                    if (pn) acum[c].parcelas.add(pn);
                 }));
                 observaciones.forEach(o => {
                     const c = problemaDeObservacion(o); if (!c) return;
                     (acum[c] = acum[c] || { registros:0, parcelas:new Set(), fuente:{muestreo:0,observacion:0} });
                     acum[c].registros++; acum[c].fuente.observacion++;
-                    if (o.parcelaNombre) acum[c].parcelas.add(o.parcelaNombre);
+                    const pn = nombreParcela(o.parcelaId, o.parcelaNombre);
+                    if (pn) acum[c].parcelas.add(pn);
                 });
                 return Object.entries(acum).map(([cod, d]) => ({
                     codigo: cod, nombre: nombreProblema(cod), tipo: tipoProblema(cod),
@@ -9026,11 +9105,34 @@ function construirExportIA() {
             diagnosticos_fuera_de_catalogo: diagnosticosSinClasificar(),
             cobertura_por_parcela: parcelas.map(p => ({
                 parcela: p.nombre,
-                muestreos: muestreos.filter(m => m.parcelaNombre === p.nombre).length,
-                observaciones: observaciones.filter(o => o.parcelaNombre === p.nombre).length,
-                ultimo_muestreo: muestreos.filter(m => m.parcelaNombre === p.nombre)
+                // Filtrado por ID (no por nombre): robusto si renombraste la parcela
+                muestreos: muestreos.filter(m => mismoId(m.parcelaId, p.id)).length,
+                observaciones: observaciones.filter(o => mismoId(o.parcelaId, p.id)).length,
+                ultimo_muestreo: muestreos.filter(m => mismoId(m.parcelaId, p.id))
                     .map(m => m.fechaISO || '').sort().pop() || null
-            })).sort((a,b) => a.muestreos - b.muestreos)
+            })).sort((a,b) => a.muestreos - b.muestreos),
+
+            // Perfil por parcela: qué problemas tiene cada una, ya agrupado (antes el
+            // modelo tenía que reconstruirlo). Solo parcelas CON datos.
+            perfil_por_parcela: parcelas.map(p => {
+                const musP = muestreos.filter(m => mismoId(m.parcelaId, p.id));
+                const obsP = observaciones.filter(o => mismoId(o.parcelaId, p.id));
+                if (!musP.length && !obsP.length) return null;
+                const cod = {};
+                musP.forEach(m => problemasDeMuestreo(m).forEach(c => cod[c] = (cod[c]||0)+1));
+                obsP.forEach(o => { const c = problemaDeObservacion(o); if (c) cod[c] = (cod[c]||0)+1; });
+                const ultRep = [...musP].sort((a,b)=>String(a.fechaISO).localeCompare(String(b.fechaISO))).pop()?.reporte || {};
+                return {
+                    parcela: p.nombre, estado: p.estado || null,
+                    hectareas: p.ha ?? null, arboles: p.arboles ?? null,
+                    muestreos: musP.length, observaciones: obsP.length,
+                    ultimo_muestreo: musP.map(m => m.fechaISO || '').sort().pop() || null,
+                    ultimo_estado_general: ultRep.estado_general || null,
+                    problemas: Object.entries(cod)
+                        .map(([c,n]) => ({ codigo:c, nombre:nombreProblema(c), tipo:tipoProblema(c), veces:n }))
+                        .sort((a,b) => b.veces - a.veces)
+                };
+            }).filter(Boolean).sort((a,b) => b.observaciones + b.muestreos - a.observaciones - a.muestreos)
         }
     };
 }
